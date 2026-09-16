@@ -1,0 +1,46 @@
+{
+  "name": "@execuro-sw-ecosystem/sw-tender-discovery-tool",
+  "version": "0.1.0",
+  "description": "Tender Discovery Tool - local zero-dependency runtime that renders a tender analysis sidecar (specs/rfp-NNNN-slug-analysis.md) as a live page, writes ticks / answers / proposed assumptions back into it and relays batches to the running sw-discover-tender session",
+  "license": "MIT",
+  "author": "Execuro UG (haftungsbeschränkt)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/execuro/sw-tender-discovery-tool.git"
+  },
+  "homepage": "https://github.com/execuro/sw-tender-discovery-tool#readme",
+  "bugs": {
+    "url": "https://github.com/execuro/sw-tender-discovery-tool/issues"
+  },
+  "keywords": [
+    "shopware",
+    "tender",
+    "rfp",
+    "xlsx",
+    "cli"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=20.15"
+  },
+  "scripts": {
+    "start": "node bin/cli.mjs start",
+    "test": "node --test test/*.test.mjs",
+    "check": "npm test && node scripts/check-pack.mjs && node scripts/check-version.mjs"
+  },
+  "bin": {
+    "sw-tender-discovery-tool": "bin/cli.mjs"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "page/",
+    "skills/",
+    "README.md",
+    "LICENSE",
+    "THIRD-PARTY-NOTICES.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -1,0 +1,4 @@
+ID,Area,Title,Requirement,Priority,Vendor: Compliance,Vendor: Comment,Vendor: Effort (PD)
+STF-01,Storefront,Custom theme,Theme based on the brand guide with four breakpoints.,Must,,,
+GEN-02,General,Hosting,The bidder recommends a hosting provider.,Must,,,
+CAT-03,Catalogue,Packaging units,Quantities are multiples of the packaging unit.,Should,,,
