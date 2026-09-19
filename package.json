@@ -1,6 +1,6 @@
 {
   "name": "@execuro-sw-ecosystem/sw-tender-discovery-tool",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Tender Discovery Tool - local zero-dependency runtime that renders a tender analysis sidecar (specs/rfp-NNNN-slug-analysis.md) as a live page, writes ticks / answers / proposed assumptions back into it and relays batches to the running sw-discover-tender session",
   "license": "MIT",
   "author": "Execuro UG (haftungsbeschränkt)",

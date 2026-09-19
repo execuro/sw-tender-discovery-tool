@@ -3,11 +3,11 @@ name: sw-tender-discovery-tool
 description: Open a tender analysis (specs/rfp-NNNN-slug-analysis.md) or a client workbook (specs/rfp-NNNN-slug.xlsx) in the Tender Discovery Tool — a local live HTML page where the architect confirms the workbook's column mapping, ticks proposed assumptions, answers open questions, proposes their own lines and watches the projected effect of unreconciled ticks — and run the session loop that hands every batch to sw-discover-tender and posts its report back to the page. Backs the `--editor` flag of sw-discover-tender and its `.xlsx` import. Nothing runs on open: the analysis is reconciled only when the architect sends something. Long-running: stays until the page is closed or the user stops it.
 when_to_use: Trigger phrases — "open the tender tool", "open RFP 0001 in the browser", "sw-discover-tender specs/rfp-0001-x-analysis.md --editor", "confirm the xlsx mapping on the page", "review the tender analysis in the browser".
 argument-hint: [specs/rfp-NNNN-slug-analysis.md | specs/rfp-NNNN-slug.xlsx]
-allowed-tools: Read Glob Grep Skill Bash(npx -y @execuro-sw-ecosystem/sw-tender-discovery-tool@0.1.0 *) Bash(open *) Bash(xdg-open *) Bash(grep *) Bash(printf *) Bash(tail *)
+allowed-tools: Read Glob Grep Skill Bash(npx -y @execuro-sw-ecosystem/sw-tender-discovery-tool@0.1.1 *) Bash(open *) Bash(xdg-open *) Bash(grep *) Bash(printf *) Bash(tail *)
 license: MIT
 metadata:
   author: Execuro UG (haftungsbeschränkt)
-  package: "@execuro-sw-ecosystem/sw-tender-discovery-tool@0.1.0"
+  package: "@execuro-sw-ecosystem/sw-tender-discovery-tool@0.1.1"
 ---
 
 # sw-tender-discovery-tool
@@ -19,10 +19,10 @@ The architect reviews a tender analysis on a local page and sends you work; you 
 Do not follow a session procedure from this file — an installed copy goes stale against a newer CLI. Run this once, then follow what it says:
 
 ```
-npx -y @execuro-sw-ecosystem/sw-tender-discovery-tool@0.1.0 guide
+npx -y @execuro-sw-ecosystem/sw-tender-discovery-tool@0.1.1 guide
 ```
 
-It is the single source for the xlsx import, start, the batch kinds, poll, emit and close, for the poll rules, and for the batch's fields. Every command also ends with a `next_step:` line; follow it. The CLI prints its own name bare (`sw-tender-discovery-tool poll`) — run each one as `npx -y @execuro-sw-ecosystem/sw-tender-discovery-tool@0.1.0 poll`.
+It is the single source for the xlsx import, start, the batch kinds, poll, emit and close, for the poll rules, and for the batch's fields. Every command also ends with a `next_step:` line; follow it. The CLI prints its own name bare (`sw-tender-discovery-tool poll`) — run each one as `npx -y @execuro-sw-ecosystem/sw-tender-discovery-tool@0.1.1 poll`.
 
 ## Inputs
 
