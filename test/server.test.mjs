@@ -358,3 +358,34 @@ test('reload survives a bad parse: keeps the last good model, logs once, recover
   const s2 = await j(url + 'api/session');
   assert.equal(s2.body.parseError, null);
 });
+
+test('a watch error degrades live reload instead of killing the process', { skip: !(await canBind()) && 'cannot bind 127.0.0.1 in this environment' }, async (t) => {
+  // fs.watch reports EMFILE and friends asynchronously on the FSWatcher; without
+  // a listener that unhandled 'error' event takes the whole server down.
+  const root = mkdtempSync(path.join(process.env.TMPDIR || tmpdir(), 'tender-tool-'));
+  mkdirSync(path.join(root, 'specs'));
+  copyFileSync(path.join(HERE, 'fixtures', 'rfp-0099-mini-analysis.md'), path.join(root, ANALYSIS));
+  const realExit = process.exit;
+  process.exit = () => {};
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 60, agentTimeout: 3, foreground: true, child: false, root, watchRetry: [30, 30] });
+  const url = session.url;
+  t.after(() => cleanup({ sse: { close() {} }, session, realExit, root }));
+
+  const dead = session.watcher;
+  assert.ok(dead, 'the session watches the specs directory');
+  dead.emit('error', new Error('EMFILE: too many open files, watch'));
+  assert.notEqual(session.watcher, dead, 'the dead watcher is dropped');
+  assert.ok(((await j(url + 'api/session')).body.chat || []).some(e => /file watching stopped .*EMFILE/.test(e.text || '')), 'the page is told once');
+
+  await new Promise(r => setTimeout(r, 200));
+  assert.ok(session.watcher, 'the watch is re-established on the retry');
+  assert.equal(session.watchAttempt, 0, 'a successful retry resets the backoff');
+
+  // a watch that never recovers gives up rather than retrying forever
+  session.watch = () => session.watchFailed(new Error('EMFILE: too many open files, watch'));
+  session.watcher.emit('error', new Error('EMFILE: too many open files, watch'));
+  await new Promise(r => setTimeout(r, 200));
+  const chat = (await j(url + 'api/session')).body.chat || [];
+  assert.ok(chat.some(e => /file watching gave up after 2 attempts/.test(e.text || '')), 'the give-up is reported');
+  assert.equal((await j(url + 'api/session')).status, 200, 'the server is still serving');
+});
