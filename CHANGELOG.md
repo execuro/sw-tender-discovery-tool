@@ -5,6 +5,23 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Changed
+
+- The chat no longer repeats the session banner of every past run. Older
+  `session started/resumed/closed` lines collapse into a single muted
+  **previous session** divider at each boundary; only the current session's
+  line is shown. The conversation itself still loads in full, and `chat.jsonl`
+  keeps every line for the agent's context.
+
+### Added
+
+- `sw-tender-discovery-tool uninstall-skill [--target <dir>] [--root <path>]` —
+  removes the one `SKILL.md` `install-skill` wrote, and the
+  `sw-tender-discovery-tool/` directory once it is empty. A copy the host has
+  edited is kept and reported, never deleted; an absent file is
+  `changed: false`, not an error. The two commands resolve their target
+  identically, so they are exact opposites.
+
 ## [0.1.1] - 2026-09-19
 
 ### Fixed

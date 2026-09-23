@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, copyFileSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { startServer, resolveTarget } from '../lib/server.mjs';
+import { startServer, resolveTarget, collapseSessions } from '../lib/server.mjs';
 import { collect } from '../lib/parse.mjs';
 import { canBind, exec, field, HERE, CLI } from './helpers.mjs';
 
@@ -388,4 +388,20 @@ test('a watch error degrades live reload instead of killing the process', { skip
   const chat = (await j(url + 'api/session')).body.chat || [];
   assert.ok(chat.some(e => /file watching gave up after 2 attempts/.test(e.text || '')), 'the give-up is reported');
   assert.equal((await j(url + 'api/session')).status, 200, 'the server is still serving');
+});
+
+test('only the newest session banner survives; older boundaries collapse to one divider', () => {
+  const log = [
+    { type: 'system', text: 'session started on http://127.0.0.1:1/' },
+    { type: 'reply', md: 'one' },
+    { type: 'system', text: 'session closed (closed by request)' },
+    { type: 'system', text: 'session resumed on http://127.0.0.1:2/' },
+    { type: 'reply', md: 'two' },
+    { type: 'system', text: 'session closed (closed by request)' },
+    { type: 'system', text: 'session resumed on http://127.0.0.1:3/' },
+  ];
+  const out = collapseSessions(log);
+  assert.deepEqual(out.map(e => e.text ?? e.md), ['one', 'previous session', 'two', 'session resumed on http://127.0.0.1:3/']);
+  assert.deepEqual(collapseSessions(log.slice(-1)), log.slice(-1));
+  assert.equal(collapseSessions([{ type: 'system', text: 'file watching resumed' }])[0].text, 'file watching resumed');
 });

@@ -62,6 +62,8 @@ sw-tender-discovery-tool batch  --kind reconcile                    # replaces t
 sw-tender-discovery-tool import --source specs/rfp-0001-x.xlsx      # read the workbook, propose the mapping
 sw-tender-discovery-tool export --xlsx --source specs/rfp-0001-x.xlsx  # write <basename>-response.xlsx, a copy
 sw-tender-discovery-tool stop   --doc specs/rfp-0001-x-analysis.md
+sw-tender-discovery-tool install-skill                               # write skills/<host>/sw-tender-discovery-tool/SKILL.md; --target <dir>, --print, --force
+sw-tender-discovery-tool uninstall-skill                             # remove it again; a copy you edited is kept, not deleted
 sw-tender-discovery-tool start --doc … --foreground --grace 60 --agent-timeout 180 --idle 14400
 ```
 

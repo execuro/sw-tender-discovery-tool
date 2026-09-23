@@ -1225,6 +1225,7 @@ function renderChat() {
     if (e.type === 'batch') host.append(batchBubble(e));
     else if (e.type === 'reply') host.append(replyBubble(e, progress.get(e.batch || '_')));
     else if (e.type === 'system') host.append(el('div', { class: 'msg system' }, e.text || ''));
+    else if (e.type === 'divider') host.append(el('div', { class: 'msg divider' }, e.text || ''));
   }
   host.scrollTop = host.scrollHeight;
 }

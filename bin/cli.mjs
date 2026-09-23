@@ -32,6 +32,7 @@ const COMMANDS = {
   batch: () => import('../lib/batch.mjs'),
   guide: () => import('../lib/guide.mjs'),
   'install-skill': () => import('../lib/install-skill.mjs'),
+  'uninstall-skill': () => import('../lib/uninstall-skill.mjs'),
   import: () => import('../lib/import-export.mjs'),
   export: () => import('../lib/import-export.mjs'),
 };
@@ -47,7 +48,8 @@ const USAGE = `usage: sw-tender-discovery-tool <command> [options]
   import   --source <file.xlsx> [--root <dir>] [--map] [--accept-proposed]
   export   --xlsx --source <file.xlsx> [--root <dir>]
   guide    print the session protocol
-  install-skill  [--target <dir>] [--root <path>] [--print] [--force]
+  install-skill    [--target <dir>] [--root <path>] [--print] [--force]
+  uninstall-skill  [--target <dir>] [--root <path>]
 
 Relative paths (--doc, --source) resolve against the current directory. The project
 root - where specs/.editor/ lives - is --root, else the nearest ancestor of that file
