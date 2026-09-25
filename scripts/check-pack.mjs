@@ -6,7 +6,7 @@
 // package is useless without are present, and that the tests stay out.
 
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -26,6 +26,13 @@ for (const required of ['bin/cli.mjs', 'lib/server.mjs', 'lib/guide.mjs', 'page/
 }
 const leaked = files.filter(f => f.startsWith('test/'));
 if (leaked.length) fail.push(`tests must never ship: ${leaked.join(', ')}`);
+
+// Enumerated at check time, not a static list copied here - a new lib module
+// (this WP's `apply.mjs`, `intake.mjs`, `ops.mjs` among them) ships the moment
+// it exists, with no second place to remember to add it.
+const libModules = readdirSync(path.join(PKG, 'lib')).filter(f => f.endsWith('.mjs'));
+const missingLib = libModules.filter(f => !files.includes(`lib/${f}`));
+if (missingLib.length) fail.push(`lib modules missing from the tarball: ${missingLib.join(', ')}`);
 
 if (fail.length) {
   console.error(`npm pack would be wrong:\n  ${fail.join('\n  ')}`);

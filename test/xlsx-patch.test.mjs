@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import { readWorkbook, sheetToGrid, openZip } from '../lib/xlsx.mjs';
-import { patchWorkbook, applyCellEdits, pruneCalcChain, rebuildZip, editsFromResponseCsv } from '../lib/xlsx-patch.mjs';
+import { patchWorkbook, applyCellEdits, pruneCalcChain, rebuildZip, withFullCalcOnLoad } from '../lib/xlsx-patch.mjs';
 import { proposeMap } from '../lib/import-map.mjs';
 import { buildWorkbook, buildZip } from './helpers/mkxlsx.mjs';
 
@@ -159,7 +159,9 @@ test('a dropped formula deregisters calcChain from the package', () => {
   assert.ok(!zip.text('xl/_rels/workbook.xml.rels').includes('calcChain'));
 });
 
-// ---------------------------------------------------------------- response CSV → edits
+// ---------------------------------------------------------------- answer edits (D-1/R-9: no
+// response-CSV path any more — `lib/intake.mjs`/`lib/import-export.mjs` build edits straight
+// from the analysis, exercised end to end in test/export.test.mjs)
 
 function mapForSample(buf) {
   const wb = readWorkbook(buf);
@@ -172,46 +174,31 @@ function mapForSample(buf) {
   return proposeMap(snap).tables[0];
 }
 
-const RESPONSE_CSV = `${REQ_HEADER.join(',')}
-GEN-01,Shop,Requirement 1,Must,Config,Configuration only.,2.5,
-GEN-02,Shop,Requirement 2,Must,Custom,"Custom development, two endpoints.",8,
-`;
-
-test('editsFromResponseCsv writes only the three answer columns', () => {
-  const table = mapForSample(sample());
-  const { edits, rows, problems } = editsFromResponseCsv(RESPONSE_CSV, table, { part: PART });
-  assert.deepEqual(problems, []);
-  assert.equal(rows, 2);
-  assert.deepEqual(edits.map(e => e.ref), ['E2', 'F2', 'G2', 'E3', 'F3', 'G3']);
-  assert.equal(edits.find(e => e.ref === 'G2').value, 2.5);      // effort stays a number
-  assert.equal(edits.find(e => e.ref === 'F3').value, 'Custom development, two endpoints.');
-  assert.ok(!edits.some(e => e.role === 'cost'));                 // the money columns are never written
-});
-
-test('editsFromResponseCsv refuses a CSV whose row count no longer matches the mapping', () => {
-  const table = mapForSample(sample());
-  const short = RESPONSE_CSV.split('\n').slice(0, 2).join('\n') + '\n';
-  const { problems } = editsFromResponseCsv(short, table, { part: PART });
-  assert.equal(problems.length, 1);
-  assert.match(problems[0], /row count 1 does not match/);
-});
-
-test("editsFromResponseCsv refuses a CSV that lost one of the client's own columns", () => {
-  const table = mapForSample(sample());
-  const mangled = RESPONSE_CSV.replace('Vendor: Comment', 'Our comment');
-  const { problems } = editsFromResponseCsv(mangled, table, { part: PART });
-  assert.ok(problems.some(p => /lost the client's column/.test(p)));
-});
-
-test('the round trip lands the CSV answers in the workbook', () => {
+test('the mapped answer columns land in the workbook, byte-identical elsewhere', () => {
   const src = sample();
   const table = mapForSample(src);
-  const { edits } = editsFromResponseCsv(RESPONSE_CSV, table, { part: PART });
+  const edits = [
+    { part: table.part, ref: `${table.columns.compliance}2`, value: 'Config' },
+    { part: table.part, ref: `${table.columns.comment}2`, value: 'Configuration only.' },
+    { part: table.part, ref: `${table.columns.effort}2`, value: 2.5 },
+    { part: table.part, ref: `${table.columns.compliance}3`, value: 'Custom' },
+    { part: table.part, ref: `${table.columns.comment}3`, value: 'Custom development, two endpoints.' },
+    { part: table.part, ref: `${table.columns.effort}3`, value: 8 },
+  ];
   const out = patchWorkbook(src, edits);
   const grid = sheetToGrid(readWorkbook(out).sheets[0]);
   assert.deepEqual(grid.rows[1].slice(4, 8), ['Config', 'Configuration only.', '2.5', '']);
   assert.deepEqual(grid.rows[2].slice(4, 8), ['Custom', 'Custom development, two endpoints.', '8', '']);
   assert.deepEqual(entryDiff(src, out), [PART]);
+});
+
+test('withFullCalcOnLoad sets calcPr once, and is a byte-for-byte no-op the second time', () => {
+  const src = sample();
+  const once = withFullCalcOnLoad(src);
+  const zip = openZip(once);
+  assert.match(zip.text('xl/workbook.xml'), /<calcPr[^>]*fullCalcOnLoad="1"/);
+  const twice = withFullCalcOnLoad(once);
+  assert.ok(twice.equals(once));
 });
 
 // ------------------------------------------------------------ a whole tender workbook

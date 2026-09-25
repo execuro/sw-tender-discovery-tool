@@ -1,0 +1,188 @@
+{
+  "tables": [
+    {
+      "sheet": "2 - Company Overview",
+      "headerRow": 5,
+      "firstDataRow": 6,
+      "lastDataRow": 16,
+      "tab": "Project & services",
+      "topic": "Company Overview",
+      "columns": {
+        "id": null,
+        "priority": null,
+        "requirement": "B",
+        "topic": null,
+        "compliance": null,
+        "comment": "C",
+        "effort": null,
+        "assumptions": null
+      }
+    },
+    {
+      "sheet": "3.1 General",
+      "headerRow": 5,
+      "firstDataRow": 6,
+      "lastDataRow": 9,
+      "tab": "Functional",
+      "topic": "General",
+      "columns": {
+        "id": null,
+        "priority": null,
+        "requirement": "B",
+        "topic": null,
+        "compliance": "C",
+        "comment": "D",
+        "effort": null,
+        "assumptions": "E"
+      }
+    },
+    {
+      "sheet": "3.2 - Technical ",
+      "headerRow": 5,
+      "firstDataRow": 6,
+      "lastDataRow": 9,
+      "tab": "Non-functional",
+      "topic": "IT & HOSTING",
+      "columns": {
+        "id": null,
+        "priority": null,
+        "requirement": "B",
+        "topic": null,
+        "compliance": "C",
+        "comment": "D",
+        "effort": null,
+        "assumptions": "E"
+      }
+    },
+    {
+      "sheet": "3.2 - Technical ",
+      "headerRow": 12,
+      "firstDataRow": 13,
+      "lastDataRow": 17,
+      "tab": "Non-functional",
+      "topic": "SECURITY",
+      "columns": {
+        "id": null,
+        "priority": null,
+        "requirement": "B",
+        "topic": null,
+        "compliance": "C",
+        "comment": "D",
+        "effort": null,
+        "assumptions": "E"
+      }
+    },
+    {
+      "sheet": "3.3 - Functional",
+      "headerRow": 5,
+      "firstDataRow": 6,
+      "lastDataRow": 16,
+      "tab": "Functional",
+      "topic": "Design & Development",
+      "columns": {
+        "id": null,
+        "priority": null,
+        "requirement": "B",
+        "topic": null,
+        "compliance": "C",
+        "comment": "D",
+        "effort": null,
+        "assumptions": "E"
+      }
+    },
+    {
+      "sheet": "3.3 - Functional",
+      "headerRow": 19,
+      "firstDataRow": 20,
+      "lastDataRow": 23,
+      "tab": "Functional",
+      "topic": "Customer Service",
+      "columns": {
+        "id": null,
+        "priority": null,
+        "requirement": "B",
+        "topic": null,
+        "compliance": "C",
+        "comment": "D",
+        "effort": null,
+        "assumptions": "E"
+      }
+    },
+    {
+      "sheet": "3.3 - Functional",
+      "headerRow": 26,
+      "firstDataRow": 27,
+      "lastDataRow": 32,
+      "tab": "Functional",
+      "topic": "Marketing & Promotions",
+      "columns": {
+        "id": null,
+        "priority": null,
+        "requirement": "B",
+        "topic": null,
+        "compliance": "C",
+        "comment": "D",
+        "effort": null,
+        "assumptions": "E"
+      }
+    },
+    {
+      "sheet": "3.3 - Functional",
+      "headerRow": 35,
+      "firstDataRow": 36,
+      "lastDataRow": 49,
+      "tab": "Functional",
+      "topic": "Products & Categories",
+      "columns": {
+        "id": null,
+        "priority": null,
+        "requirement": "B",
+        "topic": null,
+        "compliance": "C",
+        "comment": "D",
+        "effort": null,
+        "assumptions": "E"
+      }
+    },
+    {
+      "sheet": "3.4 - Administration",
+      "headerRow": 5,
+      "firstDataRow": 6,
+      "lastDataRow": 20,
+      "tab": "Functional",
+      "topic": "Administration",
+      "columns": {
+        "id": null,
+        "priority": null,
+        "requirement": "B",
+        "topic": null,
+        "compliance": "C",
+        "comment": "D",
+        "effort": null,
+        "assumptions": "E"
+      }
+    },
+    {
+      "sheet": "3.5 - Services",
+      "headerRow": 5,
+      "firstDataRow": 6,
+      "lastDataRow": 15,
+      "tab": "Project & services",
+      "topic": "Services",
+      "columns": {
+        "id": null,
+        "priority": null,
+        "requirement": "B",
+        "topic": null,
+        "compliance": "C",
+        "comment": "D",
+        "effort": null,
+        "assumptions": "E"
+      }
+    }
+  ],
+  "overrides": [],
+  "skip": [],
+  "items": [],
+  "projectInfo": []
+}

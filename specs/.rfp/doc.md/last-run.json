@@ -1,0 +1,61 @@
+{
+  "at": "2026-09-23T14:39:25.746Z",
+  "snapshot": {
+    "HIB-01": {
+      "coverage": "OOTB",
+      "effort": {
+        "size": "—",
+        "pd": 0,
+        "regime": "T-shirt"
+      },
+      "status": {
+        "kind": "confirmed",
+        "date": "2026-09-01",
+        "cq": null
+      },
+      "clientResponse": "Stock Shopware customer accounts cover this out of the box.",
+      "reopenedCount": 0
+    },
+    "HIB-02": {
+      "coverage": "Extension",
+      "effort": {
+        "size": "M",
+        "pd": 4,
+        "regime": "T-shirt"
+      },
+      "status": {
+        "kind": "estimated",
+        "date": null,
+        "cq": null
+      },
+      "clientResponse": "We extend the storefront product page with a branch-level stock panel.",
+      "reopenedCount": 0
+    },
+    "HIB-03": {
+      "coverage": null,
+      "effort": null,
+      "status": {
+        "kind": "blocked",
+        "date": null,
+        "cq": "CQ-1"
+      },
+      "clientResponse": "",
+      "reopenedCount": 0
+    },
+    "CMP-01": {
+      "coverage": "Custom",
+      "effort": {
+        "size": "XL",
+        "pd": 25,
+        "regime": "T-shirt"
+      },
+      "status": {
+        "kind": "failed",
+        "date": null,
+        "cq": null
+      },
+      "clientResponse": "We build a dedicated audit-trail module for pricing changes.",
+      "reopenedCount": 0
+    }
+  }
+}

@@ -14,6 +14,7 @@
       <span id="doc-ref"></span>
       <span id="status-pill" class="pill" hidden></span>
       <span id="confidence" class="conf" hidden title="confidence score from §2"></span>
+      <span id="analyze-progress" class="pill" hidden title="the automatic analyze chain: chunks queued or running against items still needing work"></span>
     </div>
   </div>
   <div class="header-right">
@@ -22,11 +23,12 @@
       <span class="track"><span class="knob"></span></span>
       <span class="switch-label">Annotate</span>
     </label>
-    <span id="queued-badge" class="badge muted" hidden title="direct writes waiting for the current run to end"></span>
+    <span id="queued-badge" class="badge muted" hidden title="direct writes waiting for the current run to end - separate from the Agent card's queued annotations/chat"></span>
     <span id="status-dot" class="dot" title="session status"></span>
     <span id="status-text" class="muted">connecting…</span>
-    <button id="reconcile-btn" class="btn" title="Ask the skill to reconcile the ticked assumptions and answered questions and re-estimate">Reconcile</button>
-    <button id="export-btn" class="btn primary" disabled title="Export is enabled at Ready to submit">Export</button>
+    <button id="profile-btn" class="btn subtle" title="Open the partner profile wizard">Profile</button>
+    <button id="reconcile-btn" class="btn" title="Ask the skill to re-estimate the items an answered question or profile change marked">Re-estimate</button>
+    <button id="export-btn" class="btn primary" title="Export the current working sheets — available anytime; unconfirmed items export with empty answer cells">Export</button>
     <button id="stop-btn" class="btn subtle" title="End the editor session">Stop session</button>
   </div>
 </header>
@@ -34,27 +36,33 @@
 <main id="layout">
   <section id="doc" class="doc"></section>
   <aside id="panel">
-    <div class="panel-block" id="notes-panel">
-      <div class="panel-head">
-        <h2>Notes <span id="notes-count" class="count"></span></h2>
-        <div class="panel-actions">
-          <button id="free-note-btn" class="btn subtle" title="Add a free note not bound to a block">+ free note</button>
-        </div>
-      </div>
-      <div id="notes" class="notes"></div>
-      <div class="panel-foot">
-        <button id="send-btn" class="btn primary" disabled>Send to agent</button>
-      </div>
-    </div>
     <div class="panel-block" id="chat-panel">
-      <div class="panel-head"><h2>Agent</h2><span id="agent-state" class="agent-state"></span></div>
+      <div class="panel-head">
+        <h2>Agent</h2>
+        <span id="agent-state" class="agent-state"></span>
+        <button id="panel-fold" class="btn subtle" type="button" title="Fold the agent panel to give the working sheets more room">&gt;</button>
+      </div>
+      <section id="queued" class="queued" hidden aria-label="Queued items">
+        <div class="q-head">
+          <button id="queued-toggle" class="q-toggle" type="button" aria-expanded="true" aria-controls="queued-list">
+            <span class="caret" aria-hidden="true"></span>Queued <span id="queued-count" class="count"></span>
+          </button>
+          <button id="queued-clear" class="btn subtle" type="button" title="Remove every queued item">Clear</button>
+        </div>
+        <div id="queued-list" class="q-list"></div>
+      </section>
       <div id="chat" class="chat"></div>
       <div class="chat-input">
-        <textarea id="chat-text" rows="2" placeholder="Ask or instruct the agents… (Enter to send, Shift+Enter for a new line)"></textarea>
-        <button id="chat-send" class="btn">Send</button>
+        <textarea id="chat-text" rows="2" placeholder="Ask or instruct the agent, or click blocks in Annotate mode to queue notes… (Enter to send, Shift+Enter for a new line)"></textarea>
+        <button id="chat-send" class="btn" disabled>Send</button>
       </div>
     </div>
   </aside>
+  <div id="panel-rail" class="panel-rail" hidden>
+    <button id="panel-unfold" class="btn subtle" type="button" title="Reopen the agent panel">&lt;</button>
+    <span id="rail-badge" class="badge muted" hidden></span>
+    <span id="rail-dot" class="dot" hidden title="agent working"></span>
+  </div>
 </main>
 <div id="note-popover" class="popover" role="dialog" aria-label="Note for the agent" hidden>
   <div class="arrow"></div>

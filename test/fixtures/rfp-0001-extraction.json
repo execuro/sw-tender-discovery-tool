@@ -1,0 +1,29 @@
+{
+  "tables": [
+    {
+      "sheet": "2 Requirements",
+      "headerRow": 1, "firstDataRow": 2, "lastDataRow": 92,
+      "tab": "Functional", "topic": null,
+      "columns": { "id": "A", "priority": "F", "requirement": "E", "topic": "B", "compliance": "J", "comment": "K", "effort": "L", "assumptions": null }
+    },
+    {
+      "sheet": "3 Non-functional & Compliance",
+      "headerRow": 1, "firstDataRow": 2, "lastDataRow": 35,
+      "tab": "Non-functional", "topic": null,
+      "columns": { "id": "A", "priority": "F", "requirement": "E", "topic": "B", "compliance": "J", "comment": "K", "effort": "L", "assumptions": null }
+    },
+    {
+      "sheet": "6 Vendor Response & Evaluation",
+      "headerRow": 20, "firstDataRow": 21, "lastDataRow": 30,
+      "tab": "Project & services", "topic": null,
+      "columns": { "id": "A", "priority": "F", "requirement": "E", "topic": "B", "compliance": "J", "comment": "K", "effort": "L", "assumptions": null }
+    }
+  ],
+  "overrides": [],
+  "skip": [],
+  "items": [],
+  "projectInfo": [
+    { "key": "shopware", "value": "Shopware 6.7 (target)", "source": "2 Requirements r2" },
+    { "key": "current-platform", "value": "Shopware 5.7.18", "source": "2 Requirements r2" }
+  ]
+}

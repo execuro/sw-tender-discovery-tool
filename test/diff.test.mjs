@@ -1,4 +1,4 @@
-// lib/diff.mjs: old vs new document model -> changed/added/removed block ids.
+// lib/diff.mjs: added / removed / changed scope item ids between two item arrays.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -7,47 +7,52 @@ import { parse } from '../lib/parse.mjs';
 import { diff } from '../lib/diff.mjs';
 import { HERE } from './helpers.mjs';
 
-const FIX = readFileSync(path.join(HERE, 'fixtures/rfp-0099-mini-analysis.md'), 'utf8');
+const FIX = readFileSync(path.join(HERE, 'fixtures/rfp-0101-xlsx-ids-analysis.md'), 'utf8');
 
 test('diff reports no changes for an unmodified document', () => {
-  const before = parse(FIX);
-  const after = parse(FIX);
-  assert.deepEqual(diff(before, after), { changed: [], added: [], removed: [] });
+  const items = parse(FIX).items;
+  assert.deepEqual(diff(items, items), { added: [], removed: [], changed: [] });
 });
 
-// A tick alone does not change a block's hash (the hash covers content, not tick state - the
-// page diffs status separately); editing the assumption's own statement text does.
-test('diff reports an edited statement as changed and nothing else', () => {
-  const before = parse(FIX);
-  const editedText = FIX.replace(
-    'Availability is display-only from the async sync, no live ERP call',
-    'Availability is display-only from the async sync, no live ERP call, confirmed with the client',
-  );
-  assert.notEqual(editedText, FIX, 'the fixture text must contain the statement being edited');
-  const after = parse(editedText);
+test('diff reports the changed field(s) on an edited item and nothing else', () => {
+  const before = parse(FIX).items;
+  const edited = FIX.replace('medium | M (4 PD)', 'high | M (4 PD)');
+  assert.notEqual(edited, FIX);
+  const after = parse(edited).items;
   const d = diff(before, after);
   assert.deepEqual(d.added, []);
   assert.deepEqual(d.removed, []);
-  assert.deepEqual(d.changed, ['STF-01.a1'], `only the edited row's block id should change (saw ${d.changed})`);
+  assert.equal(d.changed.length, 1);
+  assert.equal(d.changed[0].id, 'HIB-02');
+  assert.deepEqual(d.changed[0].fields, ['confidence']);
 });
 
-test('diff reports a removed id against an empty document, and vice versa for added', () => {
-  const before = parse(FIX);
-  const empty = parse('');
-  const removedAway = diff(before, empty);
-  assert.ok(removedAway.removed.includes('STF-01.a1'));
-  assert.deepEqual(removedAway.changed, []);
+test('diff reports several changed fields on the same item', () => {
+  const before = parse(FIX).items;
+  const edited = FIX
+    .replace('medium | M (4 PD)', 'high | L (10 PD)')
+    .replace('estimated |', 'confirmed 2026-09-23 |');
+  const after = parse(edited).items;
+  const d = diff(before, after);
+  const row = d.changed.find(c => c.id === 'HIB-02');
+  assert.ok(row);
+  assert.deepEqual(row.fields.sort(), ['confidence', 'effort', 'status']);
+});
+
+test('diff reports removed and added ids', () => {
+  const before = parse(FIX).items;
+  const removedAway = diff(before, before.filter(it => it.id !== 'CMP-01'));
+  assert.deepEqual(removedAway.removed, ['CMP-01']);
   assert.deepEqual(removedAway.added, []);
 
-  const addedBack = diff(empty, before);
-  assert.ok(addedBack.added.includes('STF-01.a1'));
-  assert.deepEqual(addedBack.changed, []);
+  const addedBack = diff(before.filter(it => it.id !== 'CMP-01'), before);
+  assert.deepEqual(addedBack.added, ['CMP-01']);
   assert.deepEqual(addedBack.removed, []);
 });
 
-test('diff treats a missing model as an empty one, on either side', () => {
-  const before = parse(FIX);
-  assert.deepEqual(diff(null, null), { changed: [], added: [], removed: [] });
-  assert.ok(diff(null, before).added.length > 0);
-  assert.ok(diff(before, null).removed.length > 0);
+test('diff treats a missing array as empty, on either side', () => {
+  assert.deepEqual(diff(null, null), { added: [], removed: [], changed: [] });
+  const items = parse(FIX).items;
+  assert.ok(diff(null, items).added.length > 0);
+  assert.ok(diff(items, null).removed.length > 0);
 });

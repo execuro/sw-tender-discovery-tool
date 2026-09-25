@@ -1,291 +1,319 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { parseYaml } from '../lib/yaml.mjs';
-import { parse, findBlock, collect, expandRows, toNum, splitRow, slugFromPath, analysisPathFor, hash } from '../lib/parse.mjs';
+import {
+  parse, collect, findBlock, splitRow, splitBullets, slugFromPath, analysisPathFor,
+  parseEffort, formatEffort, parseStatus, formatStatus, validReference,
+  sheetPrefix, stripChapterNumber, generateIds, ITEM_HEADER_LINE, TABS, PROJECT_INFO, splitHeading,
+  renderProjectInfo, renderNotTaken,
+} from '../lib/parse.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const FIX = readFileSync(path.join(here, 'fixtures/rfp-0099-mini-analysis.md'), 'utf8');
+const read = name => readFileSync(path.join(here, 'fixtures', name), 'utf8');
 
-const model = parse(FIX, { path: 'specs/rfp-0099-mini-analysis.md' });
+const XLSX_IDS = read('rfp-0101-xlsx-ids-analysis.md');
+const NOIDS = read('rfp-0102-xlsx-noids-analysis.md');
+const PDF = read('rfp-0103-pdf-prose-analysis.md');
 
-test('yaml: scalars, nested maps, inline maps and lists', () => {
-  const d = parseYaml('a: 1\nb: text # comment\nc: "x # y"\nd: null\ne: ~\nf: true\nm:\n  k: 2\n  n:\n    deep: v\nl:\n  - {a: 1, b: [x, y], c: null}\n  - plain\ninline: {date: null, files: [], stale: false}\nhash: 0000000000000000\n');
-  assert.deepEqual(d, { a: 1, b: 'text', c: 'x # y', d: null, e: null, f: true, m: { k: 2, n: { deep: 'v' } }, l: [{ a: 1, b: ['x', 'y'], c: null }, 'plain'], inline: { date: null, files: [], stale: false }, hash: '0000000000000000' });
+const modelA = parse(XLSX_IDS, { path: 'specs/rfp-0101-xlsx-ids-analysis.md' });
+const modelB = parse(NOIDS, { path: 'specs/rfp-0102-xlsx-noids-analysis.md' });
+const modelC = parse(PDF, { path: 'specs/rfp-0103-pdf-prose-analysis.md' });
+
+test('yaml: scalars, nested maps, inline maps and lists (unchanged)', () => {
+  const d = parseYaml('a: 1\nb: text # comment\nm:\n  k: 2\n');
+  assert.deepEqual(d, { a: 1, b: 'text', m: { k: 2 } });
 });
 
-test('frontmatter', () => {
-  const fm = model.frontmatter;
-  assert.equal(fm.line, 1);
-  assert.equal(fm.endLine, 17);
-  assert.ok(fm.raw.startsWith('---\nrfp: RFP-0099') && fm.raw.endsWith('\n---'));
-  assert.equal(fm.data.rfp, 'RFP-0099');
-  assert.equal(fm.data.confidence, 64);
-  assert.deepEqual(fm.data.counts.assumptions, { proposed: 2, accepted: 1, rejected: 0, suspect: 1 });
-  assert.equal(fm.data.source[0].file, 'rfp-0099-mini.csv');
-  assert.equal(fm.data.source[0].size, 412);
-  assert.equal(typeof fm.data.source[0].sha256, 'string');
-  assert.deepEqual(fm.data.export, { date: null, files: [], source_sha256: null, stale: false });
-  assert.equal(model.title, 'RFP-0099 — Mini GmbH — Mini shop');
-  assert.equal(model.rfp, 'RFP-0099');
-  assert.equal(model.client, 'Mini GmbH');
-  assert.equal(model.project, 'Mini shop');
-  assert.equal(model.slug, 'rfp-0099-mini');
+test('frontmatter and slug', () => {
+  assert.equal(modelA.frontmatter.data.state, 'In progress');
+  assert.equal(modelA.frontmatter.data.regime, 'T-shirt');
+  assert.equal(modelA.frontmatter.data.slug, 'rfp-0101-hartmann');
+  assert.equal(modelA.frontmatter.data['source-sha256']['rfp-0101-hartmann.xlsx'].length, 64);
+  assert.equal(modelA.slug, 'rfp-0101-xlsx-ids');
+  assert.equal(modelA.title, 'RFP-0101 — Hartmann Industriebedarf');
+  assert.equal(modelA.errors.length, 0, modelA.errors.join('; '));
 });
 
-test('sections s1..s7 with line ranges; unknown section s8', () => {
-  const ids = model.blocks.map(s => s.id);
-  assert.deepEqual(ids, ['s1', 's2', 's3', 's4', 's5', 's6', 's7']);
-  const s4 = findBlock(model, 's4');
-  assert.equal(s4.n, 4);
-  assert.equal(s4.title, 'Requirement analysis');
-  assert.equal(s4.line, 69);
-  assert.equal(s4.endLine, 81);
-  assert.equal(findBlock(model, 's7').endLine, 125);
-  assert.equal(s4.hash, hash('Requirement analysis'));
-  const m2 = parse(FIX + '\n## 8. Notes\n\nfree text\n\n## Appendix\n\nmore\n');
-  assert.equal(findBlock(m2, 's8').title, 'Notes');
-  assert.equal(findBlock(m2, 's8').children[0].kind, 'paragraph');
-  assert.equal(findBlock(m2, 's-appendix').n, null);
-});
-
-test('§4 tree: req rows with typed sub-lines', () => {
-  const t4 = findBlock(model, 't4');
-  assert.equal(t4.tableKind, 'analysis');
-  assert.equal(t4.colIndex.status, 9);
-  assert.equal(t4.colIndex['evidence / risk'], 8);
-  assert.deepEqual(t4.children.map(r => r.id), ['STF-01', 'GEN-02', 'CAT-03']);
-  const stf = findBlock(model, 'STF-01');
-  assert.equal(stf.kind, 'req');
-  assert.deepEqual(stf.children.map(c => c.id), ['STF-01.a1', 'STF-01.a2', 'STF-01.c1']);
-  assert.deepEqual(stf.lmh, { low: 12, mid: 16, high: 22 });
-  assert.equal(stf.pd, 15.5);
-  assert.equal(stf.prio, 'Must');
-  assert.equal(stf.cls, 'custom');
-  assert.equal(stf.lvl, 'vague');
-  assert.equal(stf.line, 73);
-  assert.equal(stf.endLine, 76);
-  assert.deepEqual(stf.status, { kind: 'estimated', cq: [] });
-  assert.deepEqual(stf.path, ['Requirement analysis', 'table (ID | Kind | Prio)']);
-  assert.equal(stf.tableId, 't4');
-  const a1 = findBlock(model, 'STF-01.a1');
-  assert.equal(a1.kind, 'assume');
-  assert.equal(a1.parent, 'STF-01');
-  assert.equal(a1.n, 1);
-  assert.equal(a1.pdSaved, 5);
-  assert.equal(a1.pdSavedRaw, '−5');
-  assert.equal(a1.status.state, 'proposed');
-  assert.equal(a1.riskTo, 'client');
-  assert.equal(a1.raw, FIX.split('\n')[73]);
-  assert.deepEqual(a1.path, ['Requirement analysis', 'table (ID | Kind | Prio)', 'STF-01']);
-  const a2 = findBlock(model, 'STF-01.a2');
-  assert.deepEqual(a2.status, { state: 'accepted', date: '2026-09-01', suspect: false, raw: 'accepted 2026-09-01' });
-  assert.equal(a2.cls, 'config');
-  const c1 = findBlock(model, 'STF-01.c1');
-  assert.equal(c1.kind, 'clarify');
-  assert.equal(c1.decision, 'Branch stock shown from synced fields, central stock sellable');
-  assert.equal(c1.source, 'client, CQ-2');
-  assert.equal(c1.date, '2026-09-04');
-  const cat = findBlock(model, 'CAT-03');
-  assert.deepEqual(cat.status, { kind: 'provisional', cq: ['CQ-1'] });
-  const cs = findBlock(model, 'CAT-03.a1').status;
-  assert.equal(cs.state, 'suspect');
-  assert.equal(cs.suspect, true);
-  const gen = findBlock(model, 'GEN-02');
-  assert.equal(gen.cls, 'commitment');
-  assert.equal(gen.pd, 0);
-  assert.equal(a1.hash, hash('STF-01.a1|' + a1.statement));
-  assert.equal(stf.hash, hash('STF-01|' + stf.text));
-});
-
-test('§3 global rows', () => {
-  const a1 = findBlock(model, 'A-1');
-  assert.equal(a1.kind, 'global');
-  assert.equal(a1.gkind, 'assume');
-  assert.deepEqual(a1.rowsNamed, ['STF-01', 'STF-02', 'STF-03']);
-  assert.deepEqual(a1.pdSaved, { total: 4, perRow: { 'STF-01': 3, 'CAT-03': 1 }, raw: 'STF-01 −3 · CAT-03 −1' });
-  assert.equal(a1.status.state, 'proposed');
-  assert.equal(a1.riskTo, 'client');
-  assert.equal(findBlock(model, 'X-1').gkind, 'exclude');
-  assert.deepEqual(findBlock(model, 'X-1').status, { state: null, raw: 'rfp' });
-  assert.equal(findBlock(model, 'RC-1').gkind, 'clarify');
-  assert.equal(findBlock(model, 't3').tableKind, 'global');
-});
-
-test('§5 question blocks', () => {
-  const cq = findBlock(model, 'CQ-1');
-  assert.equal(cq.kind, 'question');
-  assert.equal(cq.qkind, 'cq');
-  assert.deepEqual(cq.rows, ['CAT-03']);
-  assert.equal(cq.blocking, false);
-  assert.equal(cq.priority, null);
-  assert.equal(cq.question, 'Does the CSV quick order list corrected lines before adding to the cart?');
-  assert.deepEqual(cq.options, [
-    { letter: 'A', text: 'yes, a correction list is shown first', checked: false, line: 87 },
-    { letter: 'B', text: 'no, quantities are corrected silently', checked: false, line: 88 },
+test('eight sections, fixed order and titles', () => {
+  assert.deepEqual(modelA.blocks.map(b => b.id), ['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8']);
+  assert.deepEqual(modelA.blocks.map(b => b.title), [
+    'Context', 'Totals', 'Global assumptions and exclusions', 'Scope items', 'Questions',
+    'Integrations', 'Glossary', 'Log',
   ]);
-  assert.deepEqual(cq.other, { text: '', checked: false, line: 89 });
-  assert.equal(cq.assume, 'option B');
-  assert.equal(cq.line, 85);
-  assert.equal(cq.endLine, 90);
-  assert.equal(cq.hash, hash('CQ-1|' + cq.question));
-  const q = findBlock(model, 'Q-1');
-  assert.equal(q.qkind, 'q');
-  assert.equal(q.priority, 'high');
-  assert.equal(q.blocking, null);
-  assert.deepEqual(q.rows, []);
-  const ns = collect(model.blocks).find(b => b.notSent);
-  assert.deepEqual(ns.notSent, []);
-  assert.equal(ns.kind, 'paragraph');
-  const m2 = parse(FIX.replace('Not sent — cap: none', 'Not sent — cap: STF-01, CAT-03 (comment)'));
-  assert.deepEqual(collect(m2.blocks).find(b => b.notSent).notSent, ['STF-01', 'CAT-03']);
-  const ticked = parse(FIX.replace('- [ ] B — no, quantities', '- [x] B — no, quantities'));
-  assert.equal(findBlock(ticked, 'CQ-1').options[1].checked, true);
+  const bad = parse(XLSX_IDS.replace('## 4. Scope items', '## 4. Scope stuff'));
+  assert.ok(bad.errors.some(e => e.includes('§4 title')));
 });
 
-test('meta', () => {
-  const m = model.meta;
-  assert.equal(m.rfp, 'RFP-0099');
-  assert.equal(m.status, 'Draft');
-  assert.equal(m.confidence, 64);
-  assert.equal(m.counts.rows, 3);
-  assert.deepEqual(m.counts.assume, { proposed: 2, tickedAccept: 0, tickedReject: 0, accepted: 1, rejected: 0, suspect: 1 });
-  assert.deepEqual(m.counts.questions, { client: 1, blocking: 0, blockingOnMust: 0, partner: 1, high: 1 });
-  assert.equal(m.counts.clarifications, 2);
-  assert.equal(m.counts.req.estimated, 2);
-  assert.equal(m.counts.req.provisional, 1);
-  assert.equal(m.totals.must, 15.5);
-  assert.equal(m.totals.should, 2.5);
-  assert.equal(m.totals.could, 0);
-  assert.equal(m.totals.services, 0);
-  assert.equal(m.totals.total, 18);
-  assert.deepEqual(m.overhead, { pct: 10, mode: 'folded', tbd: false });
-  assert.deepEqual(m.buffer, { pct: 5, mode: 'separate', tbd: false });
-  assert.equal(m.readyGate.ready, false);
-  assert.ok(m.readyGate.reasons.some(r => r.startsWith('confidence 64')));
-  assert.ok(m.readyGate.reasons.includes('open high Q-1'));
-  assert.ok(m.readyGate.reasons.includes('1 suspect line'));
-  assert.deepEqual(m.exportState, { exported: false, date: null, files: [], stale: false, gateNow: false });
-  assert.deepEqual(m.fmMismatch, []);
-  const off = parse(FIX.replace('rows: 3', 'rows: 4').replace('| STF-01.a1 | assume | | | | | −5 |', '| STF-01.a1 | assume | | | | | −5 |').replace('| [ ] |\n| STF-01.a2', '| [x] |\n| STF-01.a2'));
-  assert.deepEqual(off.meta.fmMismatch, ['counts.rows: frontmatter 4, document 3', 'counts.assumptions.proposed: frontmatter 2, document 1']);
-  assert.ok(off.meta.readyGate.reasons.includes('1 unreconciled tick'));
-  const blocking = parse(FIX.replace('### CQ-1 · CAT-03 · blocking: no', '### CQ-1 · STF-01 · blocking: yes'));
-  assert.ok(blocking.meta.readyGate.reasons.includes('blocking CQ-1 on Must STF-01'));
-  assert.equal(blocking.meta.counts.questions.blockingOnMust, 1);
+test('§4 items: header, area/tab/topic, cells, `\\|` escape and `<br>` lists', () => {
+  assert.deepEqual(modelA.items.map(i => i.id), ['HIB-01', 'HIB-02', 'HIB-03', 'CMP-01']);
+  assert.equal(modelA.items[0].area, 'Functional · Requirements');
+  assert.equal(modelA.items[0].tab, 'Functional');
+  assert.equal(modelA.items[0].topic, 'Requirements');
+  assert.equal(modelA.items[3].area, 'Non-functional · Compliance');
+  assert.equal(modelA.items[3].tab, 'Non-functional');
+  assert.equal(modelA.items[3].topic, 'Compliance');
+  const hib2 = modelA.items[1];
+  assert.equal(hib2.prio, 'Should');
+  assert.equal(hib2.coverage, 'Extension');
+  assert.equal(hib2.confidence, 'medium');
+  assert.deepEqual(hib2.effort, { size: 'M', pd: 4, regime: 'T-shirt' });
+  assert.equal(hib2.requirement, 'Show stock per branch on the product page.');
+  assert.deepEqual(hib2.assumptions, ['Branch stock comes from the nightly ERP sync']);
+  assert.equal(hib2.internalNote, 'Ask sales whether live stock is a hard requirement');
+  assert.deepEqual(hib2.references, ['kb: Stock display · Storefront']);
+  assert.deepEqual(hib2.status, { kind: 'estimated', date: null, cq: null });
+
+  const escaped = parse(XLSX_IDS.replace('kb: Stock display · Storefront', 'kb: Sync is async \\| display-only<br>- second line'));
+  const lines = escaped.items[1].references;
+  assert.deepEqual(lines, ['kb: Sync is async | display-only', 'second line']);
 });
 
-test('req status: queued and analysing', () => {
-  const q = parse(FIX.replace('| provisional, CQ-1 |', '| queued |'));
-  assert.deepEqual(findBlock(q, 'CAT-03').status, { kind: 'queued', cq: [] });
-  assert.equal(q.meta.counts.req.queued, 1);
-  assert.equal(q.meta.counts.req.analysing, 0);
-  assert.equal(q.meta.counts.req.provisional, 0);
-  const a = parse(FIX.replace('| provisional, CQ-1 |', '| analysing, CQ-1 |'));
-  assert.deepEqual(findBlock(a, 'CAT-03').status, { kind: 'analysing', cq: ['CQ-1'] });
-  assert.equal(a.meta.counts.req.analysing, 1);
+test('§4 Requirement Coverage: only the six values, else an error', () => {
+  assert.deepEqual(modelA.items.map(i => i.coverage), ['OOTB', 'Extension', null, 'Custom']);
+  const bad = parse(XLSX_IDS.replace('| Custom | low |', '| Bespoke | low |'));
+  assert.ok(bad.errors.some(e => e.includes('invalid Requirement Coverage "Bespoke"')));
 });
 
-test('tolerance: bold overhead label, prose PD saved, _TBD_, escapes, ASCII minus, ticked suspect', () => {
-  const v = FIX
-    .replace('By area: STF: 15.5 · GEN: 0 · CAT: 2.5 · Foundation efforts: none · Overhead / buffer: 10% folded · buffer 5% separate · level buffers 0/10/25% · Plan variants: single variant · Blocking rows: none',
-      '**By area:** STF 15.5\n**Overhead / buffer applied:** overhead `_TBD_` (none applied) · risk buffer `_TBD_`\n**Blocking rows:** none')
-    .replace('STF-01 −3 · CAT-03 −1', '40 total, per row at acceptance')
-    .replace('| vague | 15.5 |', '| vague | `_TBD_` |')
-    .replace('Availability is display-only from the async sync, no live ERP call', 'Sync is async \\| display-only<br>no live ERP call')
-    .replace('| −5 |', '| -5 |')
-    .replace('| [ ] suspect |', '| [x] suspect |');
-  const m = parse(v);
-  assert.deepEqual(m.meta.overhead, { pct: null, mode: null, tbd: true });
-  assert.deepEqual(m.meta.buffer, { pct: null, mode: null, tbd: true });
-  const a = findBlock(m, 'A-1');
-  assert.equal(a.pdSaved.total, 40);
-  assert.equal(a.pdSaved.perRow, null);
-  const stf = findBlock(m, 'STF-01');
-  assert.equal(stf.pd, null);
-  assert.equal(stf.pdRaw, '`_TBD_`');
-  const a1 = findBlock(m, 'STF-01.a1');
-  assert.equal(a1.statement, 'Sync is async | display-only<br>no live ERP call');
-  assert.equal(a1.pdSaved, 5);
-  const cs = findBlock(m, 'CAT-03.a1').status;
-  assert.equal(cs.state, 'ticked-accept');
-  assert.equal(cs.suspect, true);
-  assert.equal(m.meta.counts.assume.tickedAccept, 1);
-  assert.equal(m.meta.counts.assume.suspect, 1);
-  const rej = parse(FIX.replace('| [ ] suspect |', '| [-] suspect |'));
-  assert.equal(findBlock(rej, 'CAT-03.a1').status.state, 'ticked-reject');
+test('§4 Confidence: high|medium|low or empty', () => {
+  const bad = parse(XLSX_IDS.replace('| Custom | low |', '| Custom | urgent |'));
+  assert.ok(bad.errors.some(e => e.includes('invalid Confidence "urgent"')));
 });
 
-test('fenced code inside a section is not a table', () => {
-  const m = parse(FIX.replace('**Source map.**', '```\n| a | b |\n| --- | --- |\n| 1 | 2 |\n```\n\n**Source map.**'));
-  const s1 = findBlock(m, 's1');
-  assert.equal(s1.children.filter(b => b.kind === 'table').length, 1);
-  assert.equal(s1.children.find(b => b.kind === 'code').md.split('\n').length, 5);
-  assert.equal(findBlock(m, 't1').tableKind, 'source');
-  assert.equal(m.blocks.length, 7);
+test('§4 Effort cell, both regimes, OOTB, empty', () => {
+  assert.deepEqual(modelA.items[0].effort, { size: '—', pd: 0, regime: 'T-shirt' });
+  assert.equal(modelA.items[2].effort, null); // not estimated
+  assert.deepEqual(modelC.items[0].effort, { size: null, pd: 0, regime: 'profile' });
+  assert.deepEqual(modelC.items[1].effort, { size: null, pd: 9.5, regime: 'profile' });
+  assert.equal(formatEffort(modelA.items[1].effort), 'M (4 PD)');
+  assert.equal(formatEffort(modelA.items[0].effort), '— (0 PD)');
+  assert.equal(formatEffort(modelC.items[1].effort), '9.5 PD');
+  assert.equal(formatEffort(null), '');
+  const bad = parse(XLSX_IDS.replace('M (4 PD)', 'HUGE (4 PD)'));
+  assert.ok(bad.errors.some(e => e.includes('invalid Estimation')));
+  const bad2 = parse(XLSX_IDS.replace('M (4 PD)', 'M 4 PD'));
+  assert.ok(bad2.errors.some(e => e.includes('invalid Estimation cell')));
 });
 
-test('helpers', () => {
-  assert.deepEqual(expandRows('STF-01..STF-10'), ['STF-01', 'STF-02', 'STF-03', 'STF-04', 'STF-05', 'STF-06', 'STF-07', 'STF-08', 'STF-09', 'STF-10']);
-  assert.deepEqual(expandRows('GEN-06, B2B-02..06 · §6; X'), ['GEN-06', 'B2B-02', 'B2B-03', 'B2B-04', 'B2B-05', 'B2B-06']);
-  assert.equal(toNum('−5'), -5);
-  assert.equal(toNum('15,5 PD'), 15.5);
-  assert.equal(toNum('`_TBD_`'), null);
-  assert.equal(toNum(''), null);
+test('§4 Status grammar', () => {
+  assert.deepEqual(modelA.items[0].status, { kind: 'confirmed', date: '2026-09-01', cq: null });
+  assert.deepEqual(modelA.items[2].status, { kind: 'blocked', date: null, cq: 'CQ-1' });
+  assert.equal(formatStatus(modelA.items[0].status), 'confirmed 2026-09-01');
+  assert.equal(formatStatus(modelA.items[2].status), 'blocked CQ-1');
+  assert.equal(formatStatus({ kind: 'reopened', date: null, cq: null }), 'reopened');
+  const bad = parse(XLSX_IDS.replace('| confirmed 2026-09-01 |', '| done |'));
+  assert.ok(bad.errors.some(e => e.includes('invalid Status cell')));
+});
+
+test('§4 References: prefixes validated', () => {
+  assert.equal(validReference('kb: Customer accounts'), true);
+  assert.equal(validReference('isv: PIM Connector · Acme Software · 6.5, 6.6 · https://x'), true);
+  assert.equal(validReference('reopened 2026-09-12: profile change re-estimated the effort'), true);
+  assert.equal(validReference('was 5 PD'), true, 'ops.mjs accept\'s own audit line (effort dropped on accept)');
+  assert.equal(validReference('nonsense'), false);
+  const bad = parse(XLSX_IDS.replace('kb: Customer accounts', 'not a reference'));
+  assert.ok(bad.errors.some(e => e.includes('invalid reference')));
+});
+
+test('§4 header must be one of the two known layouts', () => {
+  assert.equal(ITEM_HEADER_LINE, '| ID | Prio | Requirement | Requirement Coverage | Confidence | Estimation | Client Response | Assumptions | Internal note | References | Status |');
+  const bad = parse(XLSX_IDS.replace(ITEM_HEADER_LINE, '| Id | Prio | Coverage | Confidence | Estimation | Requirement | Client Response | Assumptions | Internal note | References | Status |'));
+  assert.ok(bad.errors.some(e => e.includes('§4 header')));
+});
+
+test('§4 header: the pre-rename order/label (Effort before Requirement) still parses to the same items (5b backward read)', () => {
+  const OLD_HEADER_LINE = '| ID | Prio | Requirement Coverage | Confidence | Effort | Requirement | Client Response | Assumptions | Internal note | References | Status |';
+  const oldDoc = XLSX_IDS
+    .replaceAll(ITEM_HEADER_LINE, OLD_HEADER_LINE)
+    .replace('| HIB-01 | Must | Customers can create an account and log in. | OOTB | high | — (0 PD) | Stock Shopware customer accounts cover this out of the box. |  |  | kb: Customer accounts | confirmed 2026-09-01 |',
+      '| HIB-01 | Must | OOTB | high | — (0 PD) | Customers can create an account and log in. | Stock Shopware customer accounts cover this out of the box. |  |  | kb: Customer accounts | confirmed 2026-09-01 |')
+    .replace('| HIB-02 | Should | Show stock per branch on the product page. | Extension | medium | M (4 PD) | We extend the storefront product page with a branch-level stock panel. | - Branch stock comes from the nightly ERP sync | Ask sales whether live stock is a hard requirement | kb: Stock display · Storefront | estimated |',
+      '| HIB-02 | Should | Extension | medium | M (4 PD) | Show stock per branch on the product page. | We extend the storefront product page with a branch-level stock panel. | - Branch stock comes from the nightly ERP sync | Ask sales whether live stock is a hard requirement | kb: Stock display · Storefront | estimated |')
+    .replace('| HIB-03 | Could | The client\'s requirement text is too vague to size yet. |  |  |  |  |  |  |  | blocked CQ-1 |',
+      '| HIB-03 | Could |  |  |  | The client\'s requirement text is too vague to size yet. |  |  |  |  | blocked CQ-1 |')
+    .replace('| CMP-01 | Must | Provide an audit trail of every price change for the last seven years. | Custom | low | XL (25 PD) | We build a dedicated audit-trail module for pricing changes. |  |  | failed: no stock or project feature to extend | failed |',
+      '| CMP-01 | Must | Custom | low | XL (25 PD) | Provide an audit trail of every price change for the last seven years. | We build a dedicated audit-trail module for pricing changes. |  |  | failed: no stock or project feature to extend | failed |');
+  const old = parse(oldDoc, { path: 'specs/rfp-0101-xlsx-ids-analysis.md' });
+  assert.equal(old.errors.length, 0, old.errors.join('; '));
+  assert.deepEqual(old.items, modelA.items, 'the old layout parses to the exact same items as the new one');
+});
+
+test('§5 CQ block: options, effect, Fallback, Answered', () => {
+  const cq = modelC.questions.find(q => q.id === 'CQ-1');
+  assert.equal(cq.kind, 'cq');
+  assert.deepEqual(cq.items, ['CHK-1']);
+  assert.equal(cq.question, 'How many approval steps does the client\'s process require?');
+  assert.deepEqual(cq.options, [
+    { key: 'A', text: 'two steps', effect: 'smaller workflow engine', checked: false },
+    { key: 'B', text: 'up to five steps', effect: 'a configurable step engine', checked: true },
+  ]);
+  assert.equal(cq.fallback, 'A');
+  assert.deepEqual(cq.answered, { date: '2026-09-11', key: 'B' });
+
+  const q1 = modelA.questions.find(q => q.id === 'CQ-1');
+  assert.deepEqual(q1.items, ['HIB-03']);
+  assert.equal(q1.fallback, 'B');
+  assert.equal(q1.answered, null);
+});
+
+test('§5 CQ needs at least two options; a fallback must name an option', () => {
+  const bad = parse(XLSX_IDS.replace(/- \[ \] B — daily sync.*\n/, ''));
+  assert.ok(bad.errors.some(e => e.includes('needs at least two options')));
+  const bad2 = parse(XLSX_IDS.replace('Fallback: B', 'Fallback: C'));
+  assert.ok(bad2.errors.some(e => e.includes('fallback C is not one of its options')));
+});
+
+test('§5 Q block: options optional', () => {
+  const q = modelB.questions.find(q => q.id === 'Q-1');
+  assert.equal(q.kind, 'q');
+  assert.deepEqual(q.options, []);
+  assert.equal(q.fallback, null);
+});
+
+test('sheetPrefix / generateIds (SI-2)', () => {
+  const taken = new Set();
+  assert.equal(sheetPrefix('B2B Requirements', taken), 'BR');
+  assert.equal(sheetPrefix('Non-functional & Compliance', taken), 'NC');
+  assert.equal(sheetPrefix('Requirements', taken), 'REQ');
+  const t2 = new Set();
+  assert.equal(sheetPrefix('Cover', t2), 'COV');
+  assert.equal(sheetPrefix('Cover', t2), 'COV2'); // collision -> 2, 3...
+  assert.equal(sheetPrefix('Cover', t2), 'COV3');
+
+  const areas = [
+    { name: 'Requirements', items: [{ id: null, text: 'a' }, { id: 'CLIENT-9', text: 'b' }, { id: null, text: 'c' }] },
+    { name: 'Requirements', items: [{ id: null, text: 'd' }] }, // second area, same name -> collision
+  ];
+  generateIds(areas);
+  assert.deepEqual(areas[0].items.map(i => i.id), ['REQ-1', 'CLIENT-9', 'REQ-2']);
+  assert.deepEqual(areas[1].items.map(i => i.id), ['REQ2-1']);
+
+  // Stable across repeated calls with the same shape.
+  const again = [
+    { name: 'Requirements', items: [{ id: null }, { id: 'CLIENT-9' }, { id: null }] },
+    { name: 'Requirements', items: [{ id: null }] },
+  ];
+  generateIds(again);
+  assert.deepEqual(again.map(a => a.items.map(i => i.id)), areas.map(a => a.items.map(i => i.id)));
+
+  // An area whose items already all carry ids never claims a prefix.
+  const withIds = [{ name: 'Cover Page', items: [{ id: 'X-1' }] }];
+  generateIds(withIds);
+  assert.equal(withIds[0].items[0].id, 'X-1');
+});
+
+test('helpers: splitRow, splitBullets, slugFromPath, analysisPathFor, collect/findBlock', () => {
   assert.deepEqual(splitRow('| a \\| b | `c|d` | e |'), ['a | b', '`c|d`', 'e']);
+  assert.deepEqual(splitBullets('- one<br>- two<br>three'), ['one', 'two', 'three']);
+  assert.deepEqual(splitBullets(''), []);
   assert.equal(slugFromPath('specs/rfp-0001-x-analysis.md'), 'rfp-0001-x');
-  assert.equal(slugFromPath('/abs/rfp-0001-x.xlsx'), 'rfp-0001-x');
   assert.equal(slugFromPath('specs/0001-cart.md'), null);
   assert.equal(analysisPathFor('specs/rfp-0001-x.csv'), 'specs/rfp-0001-x-analysis.md');
-  assert.equal(analysisPathFor('specs/rfp-0001-x-analysis.md'), 'specs/rfp-0001-x-analysis.md');
-  const dup = parse(FIX.replace('| GEN-02 | req |', '| STF-01 | req |'));
-  assert.ok(findBlock(dup, 'STF-01~2'));
+  assert.equal(findBlock(modelA, 's4').title, 'Scope items');
+  assert.equal(collect(modelA.blocks).length, 8);
 });
 
-test('a full analysis document parses with every invariant intact', () => {
-  const file = path.join(here, 'fixtures/rfp-0099-mini-analysis.md');
-  const text = readFileSync(file, 'utf8');
-  const m = parse(text, { path: 'specs/rfp-0099-mini-analysis.md' });
-  const all = collect(m.blocks);
-  // Invariants, never exact counts: the fixture may grow without breaking this.
-  assert.ok(all.filter(b => b.kind === 'req').length > 0);
-  assert.ok(all.filter(b => b.kind === 'assume').length > 0);
-  assert.equal(all.filter(b => b.orphan).length, 0);
-  assert.equal(typeof m.meta.totals.must, 'number');
-  for (const b of all.filter(b => b.kind === 'assume' && b.parent)) {
-    assert.ok(findBlock(m, b.parent), `assume ${b.id} has a parent row`);
+test('parseEffort / parseStatus tolerate bad input without throwing', () => {
+  const errs = [];
+  assert.equal(parseEffort('', e => errs.push(e)), null);
+  assert.equal(parseEffort('garbage', e => errs.push(e)), null);
+  assert.ok(errs.length >= 1);
+  const errs2 = [];
+  assert.deepEqual(parseStatus('nope', e => errs2.push(e)), { kind: null, date: null, cq: null });
+  assert.ok(errs2.length === 1);
+});
+
+test('splitHeading: `<Tab> · <Topic>`, U+00B7 with spaces', () => {
+  assert.deepEqual(splitHeading('Functional · Requirements'), { tab: 'Functional', topic: 'Requirements' });
+  assert.deepEqual(splitHeading('Project & services · Training'), { tab: 'Project & services', topic: 'Training' });
+  assert.deepEqual(splitHeading('Requirements'), { tab: null, topic: null });
+  assert.deepEqual(splitHeading('Functional - Requirements'), { tab: null, topic: null }); // hyphen is not the separator
+});
+
+test('§4 heading errors: no separator, tab not in TABS, empty topic', () => {
+  assert.deepEqual(TABS, ['Functional', 'Non-functional', 'Project & services']);
+  const noSep = parse(XLSX_IDS.replace('### Functional · Requirements', '### Requirements'));
+  assert.ok(noSep.errors.some(e => e.includes('must be "<Tab> · <Topic>"')));
+  const badTab = parse(XLSX_IDS.replace('### Functional · Requirements', '### Sales · Requirements'));
+  assert.ok(badTab.errors.some(e => e.includes('tab "Sales" is not one of')));
+  const emptyTopic = parse(XLSX_IDS.replace('### Functional · Requirements', '### Functional ·'));
+  assert.ok(emptyTopic.errors.some(e => e.includes('topic is empty')));
+});
+
+test('§4: a duplicate item id anywhere in the section is a parse error', () => {
+  const dup = parse(XLSX_IDS.replace('| CMP-01 |', '| HIB-01 |'));
+  assert.ok(dup.errors.some(e => e.includes('duplicate item id "HIB-01"')));
+});
+
+test('§1 Project information: PROJECT_INFO fixed order, 18 rows, model.projectInfo', () => {
+  assert.equal(PROJECT_INFO.length, 18);
+  assert.equal(PROJECT_INFO[0].key, 'business-model');
+  assert.equal(PROJECT_INFO[17].key, 'shopware');
+  assert.equal(modelA.projectInfo.length, 18);
+  const businessModel = modelA.projectInfo.find(r => r.key === 'business-model');
+  assert.equal(businessModel.value, 'B2B wholesale, MRO distributor');
+  assert.equal(businessModel.source, '1 Company & Context r4');
+});
+
+test('§1 Project information: a missing, unknown or out-of-order row is a parse error naming the row', () => {
+  const missing = parse(XLSX_IDS.replace('| Markets | Germany, Austria | 1 Company & Context r5 |\n', ''));
+  assert.ok(missing.errors.some(e => e.includes('must be "Markets"')), missing.errors.join('; '));
+  const swapped = XLSX_IDS.replace(
+    '| Business model | B2B wholesale, MRO distributor | 1 Company & Context r4 |\n| Markets | Germany, Austria | 1 Company & Context r5 |',
+    '| Markets | Germany, Austria | 1 Company & Context r5 |\n| Business model | B2B wholesale, MRO distributor | 1 Company & Context r4 |',
+  );
+  const reordered = parse(swapped);
+  assert.ok(reordered.errors.some(e => e.includes('row 1 must be "Business model"')), reordered.errors.join('; '));
+});
+
+test('§1 Not taken from the source: model.notTaken', () => {
+  assert.deepEqual(modelA.notTaken, []);
+  assert.deepEqual(modelC.notTaken, [{ source: 'PDF #7', text: 'Table of contents', why: 'not a requirement' }]);
+});
+
+test('renderProjectInfo / renderNotTaken produce the exact markdown the parser reads back', () => {
+  const rendered = renderProjectInfo(modelA.projectInfo);
+  assert.match(rendered, /^### Project information$/m);
+  assert.match(rendered, /\| Business model \| B2B wholesale, MRO distributor \| 1 Company & Context r4 \|/);
+  const rebuilt = XLSX_IDS.replace(/### Project information[\s\S]*?(?=\n### Not taken from the source)/, rendered + '\n\n');
+  const reparsed = parse(rebuilt);
+  assert.deepEqual(reparsed.projectInfo, modelA.projectInfo);
+
+  const renderedNT = renderNotTaken(modelC.notTaken);
+  assert.match(renderedNT, /^### Not taken from the source$/m);
+  assert.match(renderedNT, /\| PDF #7 \| Table of contents \| not a requirement \|/);
+});
+
+test('frontmatter intake: absent means confirmed; only review|confirmed are valid', () => {
+  assert.equal(modelA.frontmatter.data.intake, undefined);
+  const review = parse(XLSX_IDS.replace('slug: rfp-0101-hartmann', 'slug: rfp-0101-hartmann\nintake: review'));
+  assert.equal(review.frontmatter.data.intake, 'review');
+  assert.deepEqual(review.errors, []);
+  const bad = parse(XLSX_IDS.replace('slug: rfp-0101-hartmann', 'slug: rfp-0101-hartmann\nintake: maybe'));
+  assert.ok(bad.errors.some(e => e.includes('intake must be "review" or "confirmed"')));
+});
+
+test('a full document parses with no errors for every sample kind', () => {
+  for (const [name, m] of [['xlsx-with-ids', modelA], ['xlsx-without-ids', modelB], ['pdf-prose', modelC]]) {
+    assert.deepEqual(m.errors, [], `${name}: ${m.errors.join('; ')}`);
+    assert.ok(m.items.length > 0, `${name} has items`);
   }
-  for (const b of all.filter(b => b.kind === 'req')) {
-    assert.ok(b.status.kind !== null || b.statusRaw === '', `req ${b.id} has a known status (${b.statusRaw})`);
-  }
 });
 
-// --- client-tab grammar (§1.1/§1.2/§8/§9) --------------------------------------------------
-const TABS = readFileSync(path.join(here, 'fixtures/rfp-0098-tabs-analysis.md'), 'utf8');
-const tabsModel = parse(TABS, { path: 'specs/rfp-0098-tabs-analysis.md' });
-
-test('nine sections parse, §8 and §9 included', () => {
-  const ids = tabsModel.blocks.filter(b => b.kind === 'section').map(b => b.id);
-  assert.deepEqual(ids, ['s1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9']);
+test('sheetPrefix: a leading client chapter number is numbering, not a word', () => {
+  assert.equal(sheetPrefix('1. GENERAL REQUIREMENTS'), 'GR');
+  assert.equal(sheetPrefix('3.3 - Functional'), 'FUN');
+  assert.equal(sheetPrefix('2 Requirements'), 'REQ');
+  assert.equal(sheetPrefix('B2B Checkout'), 'BC');
 });
 
-test('§1 carries the four fixed subsections as nested sections', () => {
-  const titles = findBlock(tabsModel, 's1').children.filter(b => b.kind === 'section').map(b => b.title);
-  assert.deepEqual(titles, ['1.1 Meta', '1.2 Company & context', '1.3 Source map', '1.4 Ground truth']);
-});
-
-test('tableKind types the client-owned tables', () => {
-  const kinds = collect(tabsModel.blocks).filter(b => b.kind === 'table').map(b => b.tableKind);
-  for (const k of ['meta', 'params', 'migration', 'integration', 'glossary', 'source', 'analysis', 'global', 'log']) {
-    assert.ok(kinds.includes(k), `missing tableKind ${k} (got ${kinds.join(', ')})`);
-  }
-});
-
-test('a params row keeps its _not provided_ status cell verbatim', () => {
-  const t = collect(tabsModel.blocks).find(b => b.kind === 'table' && b.tableKind === 'params');
-  const row = t.children.find(r => r.cells[0] === 'P-12');
-  assert.equal(row.cells[t.colIndex['value']], '_not provided_');
-  assert.equal(row.cells[t.colIndex['status']], '_not provided_ ⚠ CQ-1');
+test('stripChapterNumber: the same chapter-number stripping sheetPrefix uses, exported standalone', () => {
+  assert.equal(stripChapterNumber('1. GENERAL REQUIREMENTS'), 'GENERAL REQUIREMENTS');
+  assert.equal(stripChapterNumber('3.3 - Functional'), 'Functional');
+  assert.equal(stripChapterNumber('2 Requirements'), 'Requirements');
+  assert.equal(stripChapterNumber('B2B Checkout'), 'B2B Checkout');
+  assert.equal(stripChapterNumber(''), '');
+  assert.equal(stripChapterNumber(null), '');
 });

@@ -35,25 +35,65 @@ const COMMANDS = {
   'uninstall-skill': () => import('../lib/uninstall-skill.mjs'),
   import: () => import('../lib/import-export.mjs'),
   export: () => import('../lib/import-export.mjs'),
+  check: () => import('../lib/check.mjs'),
+  report: () => import('../lib/report.mjs'),
+  intake: () => import('../lib/intake.mjs'),
+  apply: () => import('../lib/apply.mjs'),
+  confirm: () => import('../lib/ops.mjs'),
+  accept: () => import('../lib/ops.mjs'),
+  reject: () => import('../lib/ops.mjs'),
+  assume: () => import('../lib/ops.mjs'),
+  unassume: () => import('../lib/ops.mjs'),
+  answer: () => import('../lib/ops.mjs'),
+  patch: () => import('../lib/ops.mjs'),
+  profile: () => import('../lib/ops.mjs'),
+  tokens: () => import('../lib/ops.mjs'),
+  'intake-confirm': () => import('../lib/ops.mjs'),
+  move: () => import('../lib/ops.mjs'),
+  skip: () => import('../lib/ops.mjs'),
+  restore: () => import('../lib/ops.mjs'),
+  info: () => import('../lib/ops.mjs'),
 };
 
 const USAGE = `usage: sw-tender-discovery-tool <command> [options]
 
-  start    --doc <path> [--port N] [--grace S] [--agent-timeout S] [--idle S] [--foreground] [--root <dir>]
+  start    --doc <path> [--port N] [--grace S] [--agent-timeout S] [--idle S] [--foreground] [--no-intake] [--root <dir>]
   status   [--doc <path>] [--json] [--root <dir>]
   stop     [--doc <path>] [--root <dir>]
   poll     [--wait 90] [--reply "<text>"] [--doc <path>] [--root <dir>]
   emit     progress|chat|done "<text>" [--batch <id>] [--since <iso>] [--root <dir>]
-  batch    --kind batch|reconcile|analyze|export [--stage "<label>"] [--force] [--root <dir>]
-  import   --source <file.xlsx> [--root <dir>] [--map] [--accept-proposed]
-  export   --xlsx --source <file.xlsx> [--root <dir>]
+  batch    --kind intake|analyze|reestimate|notes|export [--stage "<label>"] [--force] [--root <dir>]
+  import   --source <file.xlsx|file.csv> [--root <dir>]
+  intake   <doc> --source <file> --extraction <json> [--root <dir>]
+  apply    <doc> --report <json> [--root <dir>]
+  check    <doc> [--write] [--root <dir>]
+  report   <doc> [--root <dir>]
+  confirm  <doc> <id>... | --all-unconfirmed [--root <dir>]
+  accept   <doc> <P-n> [--root <dir>]
+  reject   <doc> <P-n> [--root <dir>]
+  assume   <doc> <item|global> "<statement>" [--root <dir>]
+  unassume <doc> <item|global> "<statement>" [--root <dir>]
+  answer   <doc> <CQ-n> <key> [--root <dir>]
+  patch    <doc> <id> [--response "<text>"] [--note "<text>"] [--root <dir>]
+  profile  <doc> --file <json> [--root <dir>]
+  tokens   <doc> --suggest | --file <json> [--root <dir>]
+  intake-confirm <doc> [--root <dir>]
+  move     <doc> <id> <tab> [--topic "<t>"] [--root <dir>]
+  skip     <doc> <id> "<why>" [--root <dir>]
+  restore  <doc> "<source>" [--root <dir>]
+  info     <doc> <key> "<value>" [--root <dir>]
+  export   <doc> [--out <file>] [--root <dir>]
   guide    print the session protocol
   install-skill    [--target <dir>] [--root <path>] [--print] [--force]
   uninstall-skill  [--target <dir>] [--root <path>]
 
-Relative paths (--doc, --source) resolve against the current directory. The project
-root - where specs/.editor/ lives - is --root, else the nearest ancestor of that file
-holding .git, else the current directory. It never depends on where you ran this.
+Relative paths (--doc, --source, --out) resolve against the current directory. The project
+root - where specs/.editor/ and specs/.rfp/ live - is --root, else the nearest
+ancestor of that file holding .git, else the current directory. It never depends
+on where you ran this.
+
+A command whose module is missing fails with exit 1, naming the missing module -
+only that command, nothing else.
 
 Run \`sw-tender-discovery-tool guide\` first: it is the current session protocol.`;
 
@@ -71,14 +111,30 @@ if (!load) {
   process.exit(out.EXIT_USAGE);
 }
 
-// server.mjs and import-export.mjs both re-read the verb from their argv.
-const KEEPS_VERB = ['start', 'status', 'stop', 'import', 'export'];
+// server.mjs, import-export.mjs and ops.mjs all re-read the verb from their argv:
+// ops.mjs dispatches confirm/accept/reject/assume/unassume/answer/patch/profile
+// on argv[0], the same way import-export.mjs dispatches import/export.
+const KEEPS_VERB = ['start', 'status', 'stop', 'import', 'export',
+  'confirm', 'accept', 'reject', 'assume', 'unassume', 'answer', 'patch', 'profile', 'tokens',
+  'intake-confirm', 'move', 'skip', 'restore', 'info'];
 // Only the commands that take a --doc need to turn one into a session
 // directory, and only they pay for loading the server module.
 const NEEDS_RESOLVE = ['poll', 'batch'];
 
 try {
-  const mod = await load();
+  let mod;
+  try {
+    mod = await load();
+  } catch (e) {
+    // A command whose module is missing fails alone - the rest of the CLI,
+    // and every other command, is unaffected.
+    if (e?.code === 'ERR_MODULE_NOT_FOUND') {
+      const missing = /Cannot find module '([^']+)'/.exec(e.message)?.[1] || e.message;
+      process.stderr.write(`${cmd}: missing module ${missing}\n`);
+      process.exit(1);
+    }
+    throw e;
+  }
   const args = KEEPS_VERB.includes(cmd) ? argv : argv.slice(1);
   const ctx = NEEDS_RESOLVE.includes(cmd) ? { resolveTarget: (await import('../lib/server.mjs')).resolveTarget } : {};
   await mod.main(args, ctx);

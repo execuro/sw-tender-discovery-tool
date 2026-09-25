@@ -17,11 +17,23 @@ const ANALYSIS = 'specs/rfp-0099-mini-analysis.md';
 const SESSION_DIR = 'specs/.editor/rfp-0099-mini';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// 0.2.0 grammar fixture (six coverage values, the §4 header, nine sections).
+const GRAMMAR_FIXTURE = path.join(HERE, 'fixtures', 'rfp-0101-xlsx-ids-analysis.md');
+const GRAMMAR_ANALYSIS = 'specs/rfp-0101-xlsx-ids-analysis.md';
+
 function hostRepo() {
   const root = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'tender-tool-cli-'));
   fs.mkdirSync(path.join(root, 'specs'), { recursive: true });
   fs.copyFileSync(FIXTURE, path.join(root, ANALYSIS));
   fs.copyFileSync(SOURCE, path.join(root, 'specs', 'rfp-0099-mini.csv'));
+  return root;
+}
+
+/** A host repo carrying the new-grammar fixture, for check/report/ops CLI tests. */
+function grammarHostRepo() {
+  const root = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'tender-tool-cli-grammar-'));
+  fs.mkdirSync(path.join(root, 'specs'), { recursive: true });
+  fs.copyFileSync(GRAMMAR_FIXTURE, path.join(root, GRAMMAR_ANALYSIS));
   return root;
 }
 
@@ -41,6 +53,66 @@ test('an unknown command is a usage error', async () => {
   const r = await run(['bogus'], os.tmpdir());
   assert.equal(r.code, 2);
   assert.match(r.err, /unknown command bogus/);
+});
+
+test('no command at all prints usage', async () => {
+  const r = await run([], os.tmpdir());
+  assert.equal(r.code, 2);
+  assert.match(r.out, /usage: sw-tender-discovery-tool <command>/);
+});
+
+test('the usage text lists the new-grammar commands', async () => {
+  const r = await run(['--help'], os.tmpdir());
+  assert.equal(r.code, 0);
+  for (const cmd of ['intake', 'apply', 'check', 'report', 'confirm', 'accept', 'reject', 'assume', 'unassume', 'answer', 'patch', 'profile']) {
+    assert.match(r.out, new RegExp(`^\\s+${cmd}\\s`, 'm'), `usage must list ${cmd}`);
+  }
+});
+
+test('a command whose module has not landed yet fails alone, with one clear line', async () => {
+  // A sibling work package's module can be missing mid-development. Proven
+  // against a throwaway copy of the package with one module deleted, rather
+  // than a real lib/*.mjs file - other agents' suites run against those
+  // concurrently, in this same checkout.
+  const tmp = fs.mkdtempSync(path.join(process.env.TMPDIR || os.tmpdir(), 'tender-tool-lazy-'));
+  const copy = path.join(tmp, 'pkg');
+  try {
+    fs.cpSync(PKG, copy, { recursive: true, filter: src => !/[/\\](node_modules|test)([/\\]|$)/.test(src) });
+    fs.rmSync(path.join(copy, 'lib', 'apply.mjs'));
+    const root = hostRepo();
+    try {
+      const r = await exec(process.execPath, [path.join(copy, 'bin', 'cli.mjs'), 'apply', ANALYSIS, '--report', 'x.json'], root);
+      assert.equal(r.code, 1);
+      assert.match(r.err, /^apply: missing module .*apply\.mjs/m, 'the message must name the missing module');
+      assert.doesNotMatch(r.err, /at file:|ERR_MODULE_NOT_FOUND/, 'a stack trace, not a clear message, would leak the missing-module error');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('check and report route to their modules and work on the 0.2.0 grammar fixture', async () => {
+  const root = grammarHostRepo();
+  try {
+    const checked = await run(['check', GRAMMAR_ANALYSIS, '--write'], root);
+    assert.equal(checked.code, 0, checked.out + checked.err);
+    assert.match(checked.out, /^items: 4$/m);
+
+    const reported = await run(['report', GRAMMAR_ANALYSIS], root);
+    assert.equal(reported.code, 0, reported.out + reported.err);
+    assert.match(reported.out, /^state: In progress$/m);
+    assert.match(reported.out, /^confirmed: 1 of 4$/m);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('check with no document is a usage error, not a crash', async () => {
+  const r = await run(['check'], os.tmpdir());
+  assert.equal(r.code, 2);
+  assert.match(r.out, /usage: check <doc>/);
 });
 
 test('an unknown batch kind is a usage error', async () => {
@@ -89,9 +161,8 @@ test('start / status / reattach / poll / batch / stop', async t => {
     assert.equal(status.code, 0);
     assert.equal(field(status.out, 'running'), 'true');
     assert.equal(field(status.out, 'url'), url);
-    assert.equal(field(status.out, 'status'), 'Draft');
-    assert.equal(field(status.out, 'confidence'), '64');
-    assert.match(field(status.out, 'pending'), /ticks/);
+    assert.equal(field(status.out, 'state'), 'In progress');
+    assert.match(field(status.out, 'pending'), /open questions/);
 
     // starting again reattaches instead of binding a second port
     const again = await run(['start', '--doc', ANALYSIS], root);
@@ -104,7 +175,7 @@ test('start / status / reattach / poll / batch / stop', async t => {
     assert.equal(field(idle.out, 'event'), 'idle');
 
     // `batch --kind` replaces the raw POST api/batch curl
-    const queued = await run(['batch', '--kind', 'reconcile', '--stage', 'checking ticks', '--doc', ANALYSIS], root);
+    const queued = await run(['batch', '--kind', 'reestimate', '--stage', 'checking ticks', '--doc', ANALYSIS], root);
     assert.equal(queued.code, 0);
     const id = field(queued.out, 'batch');
     assert.match(id, /^r-\d+$/);
@@ -122,10 +193,12 @@ test('start / status / reattach / poll / batch / stop', async t => {
     // next_step must precede the payload, so a truncated read still works
     assert.ok(got.out.indexOf('next_step:') < got.out.indexOf('"id"'), 'next_step must come before the payload');
 
-    // the server's refusal of an inapplicable kind survives the CLI intact
-    const refused = await run(['batch', '--kind', 'export', '--doc', ANALYSIS], root);
+    // `analyze` over a document that already has a model, without --force, and no work
+    // (nothing queued/reopened, no reestimate.json mark): the local pre-check refuses it
+    // itself, the same rule the server enforces (WP-5).
+    const refused = await run(['batch', '--kind', 'analyze', '--doc', ANALYSIS], root);
     assert.equal(refused.code, 2);
-    assert.equal(field(refused.out, 'refused'), '409');
+    assert.match(field(refused.out, 'reason'), /already exists; send --force to re-analyse/);
 
     const emit = await run(['emit', 'progress', 'reconciling', '--batch', id], root);
     assert.equal(emit.code, 0);
@@ -139,6 +212,44 @@ test('start / status / reattach / poll / batch / stop', async t => {
   } finally {
     await run(['stop', '--doc', ANALYSIS], root).catch(() => {});
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('batch --kind analyze: an old document still at intake: review is auto-confirmed by `start` (backward compatibility), so `batch --kind analyze` is accepted right away with no manual confirm step', async t => {
+  if (!(await canBind())) return t.skip('cannot bind 127.0.0.1 in this environment');
+  const reviewRoot = grammarHostRepo();
+  try {
+    const analysisFile = path.join(reviewRoot, GRAMMAR_ANALYSIS);
+    // A queued item is work: an old document, still at `review`, with one item still queued.
+    fs.writeFileSync(analysisFile, fs.readFileSync(analysisFile, 'utf8')
+      .replace('state: In progress\n', 'state: In progress\nintake: review\n')
+      .replace(
+        '| HIB-02 | Should | Show stock per branch on the product page. | Extension | medium | M (4 PD) | We extend the storefront product page with a branch-level stock panel. | - Branch stock comes from the nightly ERP sync | Ask sales whether live stock is a hard requirement | kb: Stock display · Storefront | estimated |',
+        '| HIB-02 | Should | Show stock per branch on the product page. | Extension | medium | M (4 PD) | We extend the storefront product page with a branch-level stock panel. | - Branch stock comes from the nightly ERP sync | Ask sales whether live stock is a hard requirement | kb: Stock display · Storefront | queued |',
+      ), 'utf8');
+    await run(['start', '--doc', GRAMMAR_ANALYSIS], reviewRoot);
+    assert.match(fs.readFileSync(analysisFile, 'utf8'), /^intake: confirmed$/m, '`start` auto-confirmed the old review document');
+    const accepted = await run(['batch', '--kind', 'analyze', '--doc', GRAMMAR_ANALYSIS], reviewRoot);
+    assert.equal(accepted.code, 0, accepted.out + accepted.err);
+  } finally {
+    await run(['stop', '--doc', GRAMMAR_ANALYSIS], reviewRoot).catch(() => {});
+    fs.rmSync(reviewRoot, { recursive: true, force: true });
+  }
+
+  const confirmedRoot = grammarHostRepo();
+  try {
+    const analysisFile = path.join(confirmedRoot, GRAMMAR_ANALYSIS);
+    // A queued item is work: an intake-confirmed document with one item still queued.
+    fs.writeFileSync(analysisFile, fs.readFileSync(analysisFile, 'utf8').replace(
+      '| HIB-02 | Should | Show stock per branch on the product page. | Extension | medium | M (4 PD) | We extend the storefront product page with a branch-level stock panel. | - Branch stock comes from the nightly ERP sync | Ask sales whether live stock is a hard requirement | kb: Stock display · Storefront | estimated |',
+      '| HIB-02 | Should | Show stock per branch on the product page. | Extension | medium | M (4 PD) | We extend the storefront product page with a branch-level stock panel. | - Branch stock comes from the nightly ERP sync | Ask sales whether live stock is a hard requirement | kb: Stock display · Storefront | queued |',
+    ), 'utf8');
+    await run(['start', '--doc', GRAMMAR_ANALYSIS], confirmedRoot);
+    const accepted = await run(['batch', '--kind', 'analyze', '--doc', GRAMMAR_ANALYSIS], confirmedRoot);
+    assert.equal(accepted.code, 0, accepted.out + accepted.err);
+  } finally {
+    await run(['stop', '--doc', GRAMMAR_ANALYSIS], confirmedRoot).catch(() => {});
+    fs.rmSync(confirmedRoot, { recursive: true, force: true });
   }
 });
 
@@ -163,7 +274,7 @@ test('a killed poll redelivers the same batch', async t => {
   const root = hostRepo();
   try {
     await run(['start', '--doc', ANALYSIS], root);
-    const queued = await run(['batch', '--kind', 'reconcile', '--doc', ANALYSIS], root);
+    const queued = await run(['batch', '--kind', 'reestimate', '--doc', ANALYSIS], root);
     const id = field(queued.out, 'batch');
 
     // Kill the poll while the batch is in flight: it was never delivered, so it
@@ -188,7 +299,7 @@ test('the batch queue survives a server restart', async t => {
   const root = hostRepo();
   try {
     await run(['start', '--doc', ANALYSIS], root);
-    const id = field((await run(['batch', '--kind', 'reconcile', '--doc', ANALYSIS], root)).out, 'batch');
+    const id = field((await run(['batch', '--kind', 'reestimate', '--doc', ANALYSIS], root)).out, 'batch');
 
     await run(['stop', '--doc', ANALYSIS], root);
     await sleep(300);
@@ -208,13 +319,13 @@ test('poll --reply posts the reply and waits again in one call', async t => {
   const root = hostRepo();
   try {
     await run(['start', '--doc', ANALYSIS], root);
-    const id = field((await run(['batch', '--kind', 'reconcile', '--doc', ANALYSIS], root)).out, 'batch');
+    const id = field((await run(['batch', '--kind', 'reestimate', '--doc', ANALYSIS], root)).out, 'batch');
     await run(['poll', '--wait', '2', '--doc', ANALYSIS], root);
 
     // One command closes the finished batch and parks for the next one.
     const replying = run(['poll', '--wait', '2', '--reply', 'done with ' + id, '--doc', ANALYSIS], root);
     await sleep(300);
-    await run(['batch', '--kind', 'reconcile', '--doc', ANALYSIS], root);
+    await run(['batch', '--kind', 'reestimate', '--doc', ANALYSIS], root);
 
     const r = await replying;
     assert.equal(r.code, 0);
@@ -233,7 +344,7 @@ test('a killed poll redelivers the same batch, repeatedly - not a race', async t
     const root = hostRepo();
     try {
       await run(['start', '--doc', ANALYSIS], root);
-      const queued = await run(['batch', '--kind', 'reconcile', '--doc', ANALYSIS], root);
+      const queued = await run(['batch', '--kind', 'reestimate', '--doc', ANALYSIS], root);
       const id = field(queued.out, 'batch');
 
       const doomed = spawnCli(['poll', '--wait', '2', '--doc', ANALYSIS], root);
@@ -354,7 +465,24 @@ test('every command works through the installed .bin symlink', async t => {
       { args: ['emit', 'progress', 'x'], code: 1, expect: /no running Tender Discovery Tool/ },
       { args: ['batch', '--kind', 'bogus', '--doc', ANALYSIS], code: 2, expect: /unknown batch kind/ },
       { args: ['import'], code: 2, expect: /import needs --source/ },
-      { args: ['export'], code: 2, expect: /export needs --xlsx/ },
+      { args: ['export'], code: 2, expect: /export needs <doc>/ },
+      { args: ['check'], code: 2, expect: /usage: check <doc>/ },
+      { args: ['report'], code: 2, expect: /usage: report <doc>/ },
+      { args: ['apply'], code: 2, expect: /usage: apply <doc> --report/ },
+      { args: ['intake'], code: 2, expect: /usage: intake <doc> --source/ },
+      { args: ['confirm'], code: 2, expect: /usage: <confirm\|unconfirm\|accept\|reject/ },
+      { args: ['accept'], code: 2, expect: /usage: <confirm\|unconfirm\|accept\|reject/ },
+      { args: ['reject'], code: 2, expect: /usage: <confirm\|unconfirm\|accept\|reject/ },
+      { args: ['assume'], code: 2, expect: /usage: <confirm\|unconfirm\|accept\|reject/ },
+      { args: ['unassume'], code: 2, expect: /usage: <confirm\|unconfirm\|accept\|reject/ },
+      { args: ['answer'], code: 2, expect: /usage: <confirm\|unconfirm\|accept\|reject/ },
+      { args: ['patch'], code: 2, expect: /usage: <confirm\|unconfirm\|accept\|reject/ },
+      { args: ['profile'], code: 2, expect: /usage: <confirm\|unconfirm\|accept\|reject/ },
+      { args: ['tokens'], code: 2, expect: /usage: <confirm\|unconfirm\|accept\|reject/ },
+      { args: ['move'], code: 2, expect: /usage: <confirm\|unconfirm\|accept\|reject/ },
+      { args: ['skip'], code: 2, expect: /usage: <confirm\|unconfirm\|accept\|reject/ },
+      { args: ['restore'], code: 2, expect: /usage: <confirm\|unconfirm\|accept\|reject/ },
+      { args: ['info'], code: 2, expect: /usage: <confirm\|unconfirm\|accept\|reject/ },
       { args: ['bogus'], code: 2, expect: /unknown command bogus/ },
     ];
     for (const c of cases) {

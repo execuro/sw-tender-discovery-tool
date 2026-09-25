@@ -178,7 +178,7 @@ test('a batch queued and polled from a subdirectory reaches the same session', a
     await new Promise(r => setTimeout(r, 200));
 
     const abs = path.join(root, ANALYSIS);
-    const queued = await run(['batch', '--kind', 'reconcile', '--doc', abs], deep);
+    const queued = await run(['batch', '--kind', 'reestimate', '--doc', abs], deep);
     assert.equal(queued.code, 0, queued.out + queued.err);
 
     const got = await run(['poll', '--wait', '5', '--doc', abs], deep);

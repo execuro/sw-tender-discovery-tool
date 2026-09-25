@@ -1,19 +1,25 @@
-// `import` and `export --xlsx` as an agent actually runs them: through bin/cli.mjs, checking the
-// exit codes (0 ok · 1 failure · 2 usage), the `next_step:` contract and the refusal messages.
+// `import` as an agent actually runs it: through bin/cli.mjs, checking the exit codes
+// (0 ok · 1 failure · 2 usage), the `next_step:` contract and the refusal messages. `export`'s
+// own behaviour (surgical xlsx / built working-sheet workbook) is covered by test/export.test.mjs
+// and test/intake.test.mjs — this file is the CLI-argument layer for both commands. Own-tabs
+// (build contract `own-tabs-contract.md`): `import` no longer confirms a mapping or writes
+// per-table CSVs — it writes a snapshot, a proposed mapping and the digest `sw-tender-editor`
+// reads (contract §3/§5); `--map`/`--accept-proposed` are gone.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { buildWorkbook, buildOleStub, buildEncryptedStub } from './helpers/mkxlsx.mjs';
-import { readWorkbook, sheetToGrid, openZip } from '../lib/xlsx.mjs';
 import { runSync as run } from './helpers.mjs';
+import { PROJECT_INFO, renderProjectInfo, renderNotTaken } from '../lib/parse.mjs';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const SPECS = path.join(here, '..', '..', '..', '..', 'specs');
 
 const SLUG = 'rfp-0099-mini';
 const HEADER = ['ID', 'Area', 'Requirement', 'Priority', 'Vendor: Compliance', 'Vendor: Comment', 'Vendor: Effort (PD)', 'Vendor: One-off cost (EUR)'];
-
-const sha = f => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
 
 /** A temp host repo holding one workbook under specs/. */
 function host(bytes = null) {
@@ -32,34 +38,7 @@ function host(bytes = null) {
   return { root, source, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
 }
 
-/** Confirms the proposed mapping the way the page's confirm button would. */
-function confirm(h) {
-  const dir = path.join(h.root, 'specs', '.editor', SLUG);
-  const map = JSON.parse(fs.readFileSync(path.join(dir, 'import-map.proposed.json'), 'utf8'));
-  map.confirmedAt = new Date().toISOString();
-  fs.writeFileSync(path.join(dir, 'import-map.json'), JSON.stringify(map, null, 2));
-  return map;
-}
-
-/** The response CSV §ASSEMBLE would have written for one table. */
-function responseCsv(h, table, answers) {
-  const csvPath = path.join(h.root, 'specs', SLUG, `${String(table.index).padStart(2, '0')}-${table.slug}.csv`);
-  const lines = fs.readFileSync(csvPath, 'utf8').replace(/^﻿/, '').trim().split('\n');
-  const colIdx = c => { let n = 0; for (const ch of c) n = n * 26 + (ch.charCodeAt(0) - 64); return n - 1; };
-  const out = [lines[0]];
-  for (const line of lines.slice(1)) {
-    const cells = line.split(',');
-    cells[colIdx(table.columns.compliance)] = answers.compliance;
-    cells[colIdx(table.columns.comment)] = answers.comment;
-    cells[colIdx(table.columns.effort)] = answers.effort;
-    out.push(cells.join(','));
-  }
-  const file = path.join(h.root, 'specs', `${SLUG}-response-${table.n}-${table.slug}.csv`);
-  fs.writeFileSync(file, `﻿${out.join('\n')}\n`);
-  return file;
-}
-
-// ---------------------------------------------------------------- usage
+// ---------------------------------------------------------------- import: usage
 
 test('import without --source is a usage error', () => {
   const h = host();
@@ -70,14 +49,13 @@ test('import without --source is a usage error', () => {
   } finally { h.cleanup(); }
 });
 
-test('import refuses a source that is not a workbook', () => {
+test('import refuses a source that is not xlsx or csv', () => {
   const h = host();
   try {
-    fs.writeFileSync(path.join(h.root, 'specs', `${SLUG}.csv`), 'ID,Requirement\n');
-    const r = run(['import', '--source', `specs/${SLUG}.csv`, '--root', h.root], h.root);
-    assert.equal(r.code, 2);
-    assert.match(r.err, /\.xlsx/);
-    assert.match(r.err, /CSV, markdown and PDF/);
+    fs.writeFileSync(path.join(h.root, 'specs', `${SLUG}.md`), '# not a workbook\n');
+    const r = run(['import', '--source', `specs/${SLUG}.md`, '--root', h.root], h.root);
+    assert.equal(r.code, 1);
+    assert.match(r.err, /\.xlsx or \.csv/);
   } finally { h.cleanup(); }
 });
 
@@ -90,20 +68,7 @@ test('import reports a missing file as a usage error, not a crash', () => {
   } finally { h.cleanup(); }
 });
 
-test('export without --xlsx, and without a confirmed mapping, both refuse clearly', () => {
-  const h = host();
-  try {
-    const noFlag = run(['export', '--source', `specs/${SLUG}.xlsx`, '--root', h.root], h.root);
-    assert.equal(noFlag.code, 2);
-
-    run(['import', '--source', `specs/${SLUG}.xlsx`, '--root', h.root], h.root);
-    const noMap = run(['export', '--xlsx', '--source', `specs/${SLUG}.xlsx`, '--root', h.root], h.root);
-    assert.equal(noMap.code, 1);
-    assert.match(noMap.err, /no confirmed import mapping/);
-  } finally { h.cleanup(); }
-});
-
-// ---------------------------------------------------------------- refusals
+// ---------------------------------------------------------------- import: refusals
 
 test('a legacy .xls and an encrypted workbook are refused with advice', () => {
   for (const [bytes, expect] of [[buildOleStub(), /re-save as \.xlsx/i], [buildEncryptedStub(), /password-protected/i]]) {
@@ -116,142 +81,115 @@ test('a legacy .xls and an encrypted workbook are refused with advice', () => {
   }
 });
 
-// ---------------------------------------------------------------- the happy path
+// ---------------------------------------------------------------- import: the happy path (xlsx)
 
-test('import writes the snapshot and tells the agent what to do next', () => {
+test('import writes the snapshot, the proposed mapping and the digest, and tells the agent what to do next', () => {
   const h = host();
   try {
     const r = run(['import', '--source', `specs/${SLUG}.xlsx`, '--root', h.root], h.root);
-    assert.equal(r.code, 0);
+    assert.equal(r.code, 0, r.err);
     assert.match(r.out, /^sheets: 2 \(1 visible\)$/m);
-    assert.match(r.out, /ignored \(hidden\)/);
-    assert.match(r.out, /^next_step: confirm the mapping/m);
-    // the contract: next_step precedes the per-sheet payload (lib/out.mjs)
-    assert.ok(r.out.indexOf('next_step:') < r.out.indexOf('ignored (hidden)'),
-      'next_step must come before the sheet table');
-    const snap = JSON.parse(fs.readFileSync(path.join(h.root, 'specs', '.editor', SLUG, 'import-snapshot.json'), 'utf8'));
+    assert.match(r.out, /^requirement_tables: 1$/m);
+    assert.match(r.out, /^digest: specs\/\.editor\/rfp-0099-mini\/import-digest\.md$/m);
+    assert.match(r.out, /^next_step: run the `sw-tender-editor` extract job on the digest/m);
+    // the contract: next_step precedes any payload (lib/out.mjs)
+    assert.ok(r.out.indexOf('next_step:') > r.out.indexOf('digest:'), 'next_step must be the last line before any payload');
+
+    const dir = path.join(h.root, 'specs', '.editor', SLUG);
+    const snap = JSON.parse(fs.readFileSync(path.join(dir, 'import-snapshot.json'), 'utf8'));
     assert.equal(snap.sheets.length, 2);
     assert.ok(snap.sha256);
     assert.equal(snap.sheets[0].part, 'xl/worksheets/sheet1.xml');
-    // Nothing is written outside the session folder until the mapping is confirmed.
+    const proposed = JSON.parse(fs.readFileSync(path.join(dir, 'import-map.proposed.json'), 'utf8'));
+    assert.equal(proposed.tables.filter(t => t.role === 'requirements').length, 1);
+
+    // the digest is visible sheets only — the hidden `_answer_key` sheet is never mentioned.
+    const digest = fs.readFileSync(path.join(dir, 'import-digest.md'), 'utf8');
+    assert.match(digest, /## Sheet 1: 1 Requirements/);
+    assert.doesNotMatch(digest, /_answer_key/);
+    assert.doesNotMatch(digest, /Expected/);
+    assert.match(digest, /GEN-01/);
+
+    // Nothing is written outside the session folder — there is no wizard to confirm any more.
     assert.equal(fs.existsSync(path.join(h.root, 'specs', SLUG)), false);
   } finally { h.cleanup(); }
 });
 
-test('import --map emits the per-table CSVs of a confirmed mapping', () => {
+// ---------------------------------------------------------------- import: CSV source (task 2)
+
+test('import reads a CSV source through the same digest, delimiter auto-detected', () => {
   const h = host();
   try {
-    run(['import', '--source', `specs/${SLUG}.xlsx`, '--root', h.root], h.root);
-    confirm(h);
-    const r = run(['import', '--source', `specs/${SLUG}.xlsx`, '--root', h.root, '--map'], h.root);
-    assert.equal(r.code, 0);
-    assert.match(r.out, /^wrote: specs\/rfp-0099-mini\/01-requirements\.csv \(2 rows\)$/m);
-    assert.match(r.out, /^next_step: continue the analysis/m);
-    const csv = fs.readFileSync(path.join(h.root, 'specs', SLUG, '01-requirements.csv'), 'utf8');
-    assert.equal(csv.charCodeAt(0), 0xfeff);
-    assert.ok(csv.includes('GEN-01,Shop,Accounts,Must'));
-    assert.ok(!csv.includes('Expected'), 'the hidden answer key is never emitted');
+    const csvSlug = 'rfp-0099-csv';
+    fs.writeFileSync(path.join(h.root, 'specs', `${csvSlug}.csv`),
+      'ID;Requirement;Priority;Vendor: Compliance;Vendor: Comment;Vendor: Effort (PD)\nGEN-01;Some requirement;Must;;;\n');
+    const r = run(['import', '--source', `specs/${csvSlug}.csv`, '--root', h.root], h.root);
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /^sheets: 1 \(1 visible\)$/m);
+    assert.match(r.out, /^requirement_tables: 1$/m);
+    const digest = fs.readFileSync(path.join(h.root, 'specs', '.editor', csvSlug, 'import-digest.md'), 'utf8');
+    assert.match(digest, /GEN-01/);
   } finally { h.cleanup(); }
 });
 
-test('export --xlsx writes a copy with the answers and leaves the original untouched', () => {
+// ---------------------------------------------------------------- import: multi-block sheets
+
+test('import\'s digest lists every block of a multi-block sheet under its own sheet heading (defect E, real sample)', () => {
+  const name = 'rfp-0002-b2b-ecommerce-smb.xlsx';
+  const real = path.join(SPECS, name);
+  if (!fs.existsSync(real)) { console.log(`  (skipped — ${name} not present)`); return; }
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tdt-cli-multiblock-'));
+  try {
+    fs.mkdirSync(path.join(root, 'specs'), { recursive: true });
+    const source = path.join(root, 'specs', name);
+    fs.copyFileSync(real, source);   // work on a copy, never the tracked file
+    const r = run(['import', '--source', source, '--root', root], root);
+    assert.equal(r.code, 0, r.err);
+    const digest = fs.readFileSync(path.join(root, 'specs', '.editor', 'rfp-0002-b2b-ecommerce-smb', 'import-digest.md'), 'utf8');
+    // "3.2 - Technical " has two blocks (IT & HOSTING, SECURITY) sharing one sheet — both blocks'
+    // own `Proposed:` line must appear under that one sheet heading.
+    const idx = digest.indexOf('## Sheet 5:');
+    const nextIdx = digest.indexOf('## Sheet 6:');
+    const section = digest.slice(idx, nextIdx < 0 ? undefined : nextIdx);
+    assert.match(section, /IT & HOSTING/);
+    assert.match(section, /SECURITY/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+// ---------------------------------------------------------------- export: CLI-argument layer
+
+test('export needs a <doc> argument', () => {
   const h = host();
   try {
-    run(['import', '--source', `specs/${SLUG}.xlsx`, '--root', h.root], h.root);
-    const map = confirm(h);
-    run(['import', '--source', `specs/${SLUG}.xlsx`, '--root', h.root, '--map'], h.root);
-    const table = map.tables.find(t => t.role === 'requirements');
-    responseCsv(h, table, { compliance: 'Stock', comment: 'Standard feature.', effort: '2' });
-
-    const before = sha(h.source);
-    const r = run(['export', '--xlsx', '--source', `specs/${SLUG}.xlsx`, '--root', h.root], h.root);
-    assert.equal(r.code, 0);
-    assert.match(r.out, /^wrote: specs\/rfp-0099-mini-response\.xlsx/m);
-    assert.match(r.out, /^original_untouched: /m);
-    assert.match(r.out, /^next_step: /m);
-    assert.equal(sha(h.source), before, "the client's own file is never written");
-
-    const out = path.join(h.root, 'specs', `${SLUG}-response.xlsx`);
-    const wb = readWorkbook(out);
-    const grid = sheetToGrid(wb.sheets[0]);
-    assert.deepEqual(grid.rows[1].slice(4, 8), ['Stock', 'Standard feature.', '2', '']);
-    assert.deepEqual(grid.rows[2].slice(4, 8), ['Stock', 'Standard feature.', '2', '']);
-    assert.equal(grid.rows[1][0], 'GEN-01');                        // client cells intact
-    assert.deepEqual(wb.sheets[0].validations[0].values, ['Stock', 'Custom']);   // dropdown intact
-    assert.equal(wb.sheets[1].state, 'hidden');                     // hidden sheet still there
-
-    // Only the one sheet we wrote into differs from the client's file.
-    const zin = openZip(fs.readFileSync(h.source));
-    const zout = openZip(fs.readFileSync(out));
-    const differing = zin.names().filter(n => !zin.raw(n).equals(zout.raw(n) || Buffer.alloc(0)));
-    assert.deepEqual(differing, ['xl/worksheets/sheet1.xml']);
+    const r = run(['export'], h.root);
+    assert.equal(r.code, 2);
+    assert.match(r.err, /<doc>/);
   } finally { h.cleanup(); }
 });
 
-test('export refuses when a response CSV no longer matches the mapping', () => {
+test('export reports a missing document as a usage error', () => {
   const h = host();
   try {
-    run(['import', '--source', `specs/${SLUG}.xlsx`, '--root', h.root], h.root);
-    const map = confirm(h);
-    run(['import', '--source', `specs/${SLUG}.xlsx`, '--root', h.root, '--map'], h.root);
-    const table = map.tables.find(t => t.role === 'requirements');
-    const file = responseCsv(h, table, { compliance: 'Stock', comment: 'ok', effort: '2' });
+    const r = run(['export', 'specs/nope-analysis.md', '--root', h.root], h.root);
+    assert.equal(r.code, 2);
+    assert.match(r.err, /document not found/);
+  } finally { h.cleanup(); }
+});
 
-    // Someone deleted a row from the response CSV: the workbook must not be written half-filled.
-    const lines = fs.readFileSync(file, 'utf8').trim().split('\n');
-    fs.writeFileSync(file, `${lines.slice(0, 2).join('\n')}\n`);
-    const r = run(['export', '--xlsx', '--source', `specs/${SLUG}.xlsx`, '--root', h.root], h.root);
+test('export refuses a document with no source recorded', () => {
+  const h = host();
+  try {
+    const doc = path.join(h.root, 'specs', 'rfp-0099-empty-analysis.md');
+    const projectInfo = PROJECT_INFO.map(({ key, label }) => ({ key, label, value: 'not stated', source: '' }));
+    fs.writeFileSync(doc, [
+      '---', 'state: In progress', 'regime: T-shirt', 'source-sha256: {}', 'slug: rfp-0099-empty', '---',
+      '# Empty', '', '## 1. Context', '', renderProjectInfo(projectInfo), '', renderNotTaken([]), '',
+      '## 2. Totals', '', '<!-- totals:begin -->', '<!-- totals:end -->', '',
+      '## 3. Global assumptions and exclusions', '', '### Assumptions', '', '### Exclusions', '',
+      '## 4. Scope items', '', '## 5. Questions', '', '## 6. Integrations', '', '## 7. Glossary', '', '## 8. Log', '',
+    ].join('\n'));
+    const r = run(['export', doc, '--root', h.root], h.root);
     assert.equal(r.code, 1);
-    assert.match(r.err, /row count 1 does not match/);
-    assert.equal(fs.existsSync(path.join(h.root, 'specs', `${SLUG}-response.xlsx`)), false);
-  } finally { h.cleanup(); }
-});
-
-test('export names the missing response CSV instead of writing a partial workbook', () => {
-  const h = host();
-  try {
-    run(['import', '--source', `specs/${SLUG}.xlsx`, '--root', h.root], h.root);
-    confirm(h);
-    run(['import', '--source', `specs/${SLUG}.xlsx`, '--root', h.root, '--map'], h.root);
-    const r = run(['export', '--xlsx', '--source', `specs/${SLUG}.xlsx`, '--root', h.root], h.root);
-    assert.equal(r.code, 1);
-    assert.match(r.err, /missing response CSV for table 1/);
-  } finally { h.cleanup(); }
-});
-
-test('--accept-proposed confirms the mapping for a run without the editor page', () => {
-  const h = host();
-  try {
-    const first = run(['import', '--source', `specs/${SLUG}.xlsx`, '--root', h.root], h.root);
-    assert.match(first.out, /^next_step: confirm the mapping.*--accept-proposed/m);
-
-    const r = run(['import', '--source', `specs/${SLUG}.xlsx`, '--root', h.root, '--map', '--accept-proposed'], h.root);
-    assert.equal(r.code, 0);
-    assert.match(r.out, /^wrote: specs\/rfp-0099-mini\/01-requirements\.csv/m);
-    // The mapping is committed next to the CSVs, exactly as the page's confirm commits it.
-    const committed = JSON.parse(fs.readFileSync(path.join(h.root, 'specs', SLUG, 'import-map.json'), 'utf8'));
-    assert.ok(committed.confirmedAt);
-    assert.equal(committed.confirmedBy, 'cli --accept-proposed');
-
-    // And it is a real confirmation: export now works off it.
-    const table = committed.tables.find(t => t.role === 'requirements');
-    responseCsv(h, table, { compliance: 'Custom', comment: 'Built.', effort: '3' });
-    const exported = run(['export', '--xlsx', '--source', `specs/${SLUG}.xlsx`, '--root', h.root], h.root);
-    assert.equal(exported.code, 0);
-  } finally { h.cleanup(); }
-});
-
-test('--accept-proposed refuses a proposal that is not usable, instead of guessing', () => {
-  // A sheet with no id-like column: the tool must send the user to the page, not invent a mapping.
-  const bytes = buildWorkbook([{ name: 'Notes', rows: [['Topic', 'Vendor: Comment'], ['Hosting', '']] }]);
-  const h = host(bytes);
-  try {
-    run(['import', '--source', `specs/${SLUG}.xlsx`, '--root', h.root], h.root);
-    const r = run(['import', '--source', `specs/${SLUG}.xlsx`, '--root', h.root, '--map', '--accept-proposed'], h.root);
-    // No requirement table was proposed, so nothing is written and nothing is claimed.
-    assert.equal(r.code, 0);
-    const dir = path.join(h.root, 'specs', SLUG);
-    const files = fs.existsSync(dir) ? fs.readdirSync(dir) : [];
-    assert.ok(!files.includes('01-requirements.csv'));
+    assert.match(r.err, /names no source file/);
   } finally { h.cleanup(); }
 });

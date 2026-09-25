@@ -1,7 +1,6 @@
-// The mapping the steering screen proposes, validates and turns into the normalised CSVs.
-// The strongest assertion here is against the real tender: the heuristic must land on exactly
-// the three requirement tables and the three context tables that `lib/source.mjs` used to name
-// by hand, without any hard-coded file name.
+// The mapping `proposeMap` guesses from a grid snapshot and the digest (`lib/digest.mjs`) carries
+// forward as its own `Proposed:` line — a first guess only; the extraction job decides the real
+// mapping (own-tabs, build contract `own-tabs-contract.md` §2/§5).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -10,8 +9,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readWorkbook, sheetToGrid } from '../lib/xlsx.mjs';
 import {
-  proposeMap, validateMap, emitCsv, csvCell, csvNameFor, writeTables,
-  slugifySheet, contextKind, clientColumnsFromMap,
+  proposeMap,
+  slugifySheet, contextKind,
+  guessCoverageTokenMap, coverageMapComplete, detectDelimiter, parseDelimited, snapshotFromCsv,
+  isCommercialHeader,
 } from '../lib/import-map.mjs';
 import { buildWorkbook } from './helpers/mkxlsx.mjs';
 
@@ -65,14 +66,6 @@ test('contextKind recognises the tables lib/source.mjs used to name by hand', ()
   assert.equal(contextKind('Zeitplan'), 'other');
 });
 
-test('csvCell quotes only what RFC4180 requires', () => {
-  assert.equal(csvCell('plain'), 'plain');
-  assert.equal(csvCell('a,b'), '"a,b"');
-  assert.equal(csvCell('say "hi"'), '"say ""hi"""');
-  assert.equal(csvCell('two\nlines'), '"two\nlines"');
-  assert.equal(csvCell(null), '');
-});
-
 // ---------------------------------------------------------------- proposal
 
 test('proposes a requirement table with its answer columns and dropdown tokens', () => {
@@ -87,9 +80,9 @@ test('proposes a requirement table with its answer columns and dropdown tokens',
   assert.equal(t.columns.compliance, 'G');
   assert.equal(t.columns.comment, 'H');
   assert.equal(t.columns.effort, 'I');
-  assert.deepEqual(t.columns.cost, ['J']);
+  assert.deepEqual(t.columns.commercial, ['J']);
   assert.deepEqual(t.tokens.compliance, ['Stock', 'Config', 'Custom']);
-  assert.deepEqual(t.tokens.priority, ['Must', 'Should', 'Could']);
+  assert.equal(t.tokens.priority, undefined, 'priority tokens are client pass-through and dropped from the map');
 });
 
 test("the client's own 'Acceptance criteria / Notes' is never taken for our comment column", () => {
@@ -146,107 +139,125 @@ test('numbers the requirement tables in sheet order for the §1.3 source map', (
   assert.deepEqual(req.map(t => t.n), [1, 2]);
 });
 
-// ---------------------------------------------------------------- validation
+// ---------------------------------------------------------------- RC-4 coverage token map
 
-test('validateMap accepts a proposed map and names every problem in a broken one', () => {
-  const snap = snapshotOf(buildWorkbook([reqSheet()]));
+test('guessCoverageTokenMap: a sensible first guess, per coverage-mapping.md', () => {
+  const g = guessCoverageTokenMap(['Stock', 'Config', 'Plugin', 'Custom', 'Not offered']);
+  assert.equal(g.OOTB, 'Stock');
+  assert.equal(g.Configuration, 'Config');
+  assert.equal(g.ISV, 'Plugin');
+  assert.equal(g.Custom, 'Custom');
+  // Extension and Custom deliberately share ONE customisation-/development-style token
+  // (coverage-mapping.md) — not a duplicate-avoidance bug, the client's own wording rarely
+  // distinguishes the two either.
+  assert.equal(g.Extension, 'Custom');
+  assert.deepEqual(Object.keys(g).sort(), ['Configuration', 'Custom', 'Extension', 'ISV', 'OOTB', '—'].sort());
+});
+
+test('guessCoverageTokenMap: Extension never falls back to the Configuration token — it shares Custom\'s customisation-style token instead, even when nothing in the list reads as "extension" wording', () => {
+  // "Configurable" only matches Configuration's own regex; "Bespoke" only matches Custom's. Extension
+  // has no direct match of its own here — it must still land on "Bespoke" (customisation-style),
+  // never drift onto "Configurable" just because Configuration sits next to it.
+  const g = guessCoverageTokenMap(['Standard', 'Configurable', 'Bespoke']);
+  assert.equal(g.Configuration, 'Configurable');
+  assert.equal(g.Custom, 'Bespoke');
+  assert.equal(g.Extension, 'Bespoke', 'Extension must share Custom\'s token, not borrow Configuration\'s');
+});
+
+test('guessCoverageTokenMap: an unrecognised token list guesses nothing, never throws', () => {
+  assert.deepEqual(guessCoverageTokenMap([]), { OOTB: '', Configuration: '', Extension: '', ISV: '', Custom: '', '—': '' });
+  assert.deepEqual(guessCoverageTokenMap(undefined), { OOTB: '', Configuration: '', Extension: '', ISV: '', Custom: '', '—': '' });
+});
+
+// ---------------------------------------------------------------- leftover columns (fixed rule)
+
+test('isCommercialHeader: money/cost words, in English and German', () => {
+  assert.equal(isCommercialHeader('Vendor: One-off cost (EUR)'), true);
+  assert.equal(isCommercialHeader('Kosten'), true);
+  assert.equal(isCommercialHeader('Preis'), true);
+  assert.equal(isCommercialHeader('Area'), false);
+});
+
+test('coverageMapComplete: true only once all six keys carry a non-empty value', () => {
+  assert.equal(coverageMapComplete(undefined), false);
+  assert.equal(coverageMapComplete({}), false);
+  assert.equal(coverageMapComplete({ OOTB: 'Stock', Configuration: 'Config', Extension: 'Config', ISV: '', Custom: 'Custom', '—': 'Stock' }), false);
+  assert.equal(coverageMapComplete({ OOTB: 'Stock', Configuration: 'Config', Extension: 'Config', ISV: 'Custom', Custom: 'Custom', '—': 'Stock' }), true);
+});
+
+test('proposeMap records the compliance dropdown for later coverage-token mapping, and an assumptions column when named', () => {
+  const rows = [
+    [...REQ_HEADER, 'Vendor: Assumptions'],
+    ...Array.from({ length: 2 }, (_, i) => [`GEN-0${i + 1}`, 'Shop', `Title ${i + 1}`, `Req ${i + 1}`, 'Must', '—', '', '', '', '', '']),
+  ];
+  const snap = snapshotOf(buildWorkbook([{ name: 'Requirements', rows, validations: [{ sqref: 'G2:G3', values: ['Stock', 'Config', 'Custom'] }] }]));
+  const t = proposeMap(snap).tables[0];
+  assert.deepEqual(t.tokens.compliance, ['Stock', 'Config', 'Custom']);
+  // RC-4: the six-value coverage map itself is no longer guessed/written at propose time — that
+  // happens agentically at export (`tokens --suggest`/`--file`).
+  assert.equal(t.tokens.coverage, undefined);
+  assert.equal(t.columns.assumptions, 'K');
+  assert.equal(t.assumptionsColumn, 'K');
+});
+
+// ---------------------------------------------------------------- SI-2: no id column
+
+test('proposeMap still finds a requirements table with no id-like column at all (SI-2)', () => {
+  const rows = [
+    ['Title', 'Requirement', 'Priority', 'Vendor: Compliance', 'Vendor: Comment', 'Vendor: Effort (PD)'],
+    ['Hosting', 'The bidder recommends a hosting provider.', 'Must', '', '', ''],
+    ['Packaging', 'Quantities are multiples of the packaging unit.', 'Should', '', '', ''],
+  ];
+  const snap = snapshotOf(buildWorkbook([{ name: 'Requirements', rows }]));
+  const t = proposeMap(snap).tables[0];
+  assert.equal(t.role, 'requirements');
+  assert.equal(t.columns.id, null);
+  assert.equal(t.headerRow, 1);
+  assert.equal(t.lastDataRow, 3);
+});
+
+// ---------------------------------------------------------------- CSV source (task 2)
+
+test('detectDelimiter picks comma, semicolon or tab from the first line', () => {
+  assert.equal(detectDelimiter('a,b,c\n1,2,3'), ',');
+  assert.equal(detectDelimiter('a;b;c\n1;2;3'), ';');
+  assert.equal(detectDelimiter('a\tb\tc\n1\t2\t3'), '\t');
+  assert.equal(detectDelimiter('just one column'), ',');
+});
+
+test('parseDelimited: quoted fields, embedded delimiter, any single-char separator', () => {
+  assert.deepEqual(parseDelimited('a,b\n"x,y",z\n', ','), [['a', 'b'], ['x,y', 'z']]);
+  assert.deepEqual(parseDelimited('a;b\n"x;y";z\n', ';'), [['a', 'b'], ['x;y', 'z']]);
+});
+
+test('snapshotFromCsv builds the one-sheet snapshot proposeMap already understands', () => {
+  const csv = 'ID,Requirement,Vendor: Compliance,Vendor: Comment,Vendor: Effort (PD)\nGEN-01,Some text,,,\nGEN-02,More text,,,\n';
+  const snap = snapshotFromCsv(csv, { source: 'specs/x.csv', sha256: 'a'.repeat(64) });
+  assert.equal(snap.delimiter, ',');
+  assert.equal(snap.sheets.length, 1);
   const map = proposeMap(snap);
-  assert.deepEqual(validateMap(map), []);
-
-  const broken = JSON.parse(JSON.stringify(map));
-  broken.tables[0].firstDataRow = 1;             // not below the header
-  broken.tables[0].columns.id = null;
-  const problems = validateMap(broken);
-  assert.equal(problems.length, 2);
-  assert.ok(problems.some(p => /firstDataRow/.test(p)));
-  assert.ok(problems.some(p => /no id column/.test(p)));
-
-  assert.deepEqual(validateMap({ tables: [{ sheet: 'x', role: 'nonsense' }] }), ['table "x": unknown role "nonsense"']);
-  assert.deepEqual(validateMap(null), ['map is not an object']);
-});
-
-test('validateMap rejects two tables sharing one slug (they would overwrite one CSV)', () => {
-  const snap = snapshotOf(buildWorkbook([reqSheet('2 Requirements'), reqSheet('Requirements')]));
-  const map = proposeMap(snap);
-  const problems = validateMap(map);
-  assert.ok(problems.some(p => /duplicate table slug/.test(p)));
-});
-
-// ---------------------------------------------------------------- CSV
-
-test('emitCsv writes the header row and the data rows, BOM + LF, minimal quoting', () => {
-  const buf = buildWorkbook([reqSheet()]);
-  const wb = readWorkbook(buf);
-  const map = proposeMap(snapshotOf(buf));
-  const csv = emitCsv(sheetToGrid(wb.sheets[0]), map.tables[0]);
-  assert.equal(csv.charCodeAt(0), 0xfeff);
-  assert.ok(!csv.includes('\r'));
-  const lines = csv.replace(/^﻿/, '').trim().split('\n');
-  assert.equal(lines.length, 4);
-  // QUOTE_MINIMAL, exactly as the retired python writer: a slash is not a reason to quote.
-  assert.ok(lines[0].startsWith('ID,Area,Title,Requirement,Priority,Acceptance criteria / Notes,Vendor: Compliance'));
-  assert.ok(lines[1].startsWith('GEN-01,'));
-});
-
-test('a mid-sheet table emits from its own header row, not from row 1', () => {
-  const rows = [['prose'], [], REQ_HEADER, ['GEN-01', 'Shop', 'T', 'R', 'Must', '—', '', '', '', '']];
-  const buf = buildWorkbook([{ name: 'Mid', rows }]);
-  const wb = readWorkbook(buf);
-  const map = proposeMap(snapshotOf(buf));
-  const csv = emitCsv(sheetToGrid(wb.sheets[0]), map.tables[0]).replace(/^﻿/, '');
-  assert.ok(csv.startsWith('ID,Area,'));
-  assert.ok(!csv.includes('prose'));
-});
-
-test('writeTables writes one CSV per non-ignored table, deterministically', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tdt-map-'));
-  try {
-    const buf = buildWorkbook([reqSheet('2 Requirements'), { name: '_answer_key', state: 'hidden', rows: [['secret']] }]);
-    const wb = readWorkbook(buf);
-    const map = proposeMap(snapshotOf(buf));
-    const written = writeTables(wb, map, dir);
-    assert.deepEqual(written.map(w => w.file), ['01-requirements.csv']);
-    assert.equal(written[0].rows, 3);
-    assert.deepEqual(fs.readdirSync(dir), ['01-requirements.csv']);      // the hidden sheet never reaches disk
-
-    const once = fs.readFileSync(path.join(dir, '01-requirements.csv'), 'utf8');
-    writeTables(wb, map, dir);
-    assert.equal(fs.readFileSync(path.join(dir, '01-requirements.csv'), 'utf8'), once);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('csvNameFor keeps the <pos>-<slug>.csv shape the skill already reads', () => {
-  assert.equal(csvNameFor({ index: 3, slug: 'requirements' }), '03-requirements.csv');
-  assert.equal(csvNameFor({ index: 12, sheet: '12 Extra Sheet' }), '12-extra-sheet.csv');
-});
-
-test('clientColumnsFromMap yields the client columns in sheet order, no duplicates', () => {
-  const snap = snapshotOf(buildWorkbook([reqSheet('2 Requirements'), reqSheet('3 Non-functional')]));
-  const { files, columns, idHeader } = clientColumnsFromMap(proposeMap(snap));
-  assert.deepEqual(files, ['01-requirements.csv', '02-non-functional.csv']);
-  assert.equal(idHeader, 'ID');
-  assert.deepEqual(columns.map(c => c.header), ['Area', 'Title', 'Requirement', 'Priority', 'Acceptance criteria / Notes']);
-  assert.equal(columns.find(c => c.header === 'Requirement').long, true);
+  const t = map.tables[0];
+  assert.equal(t.role, 'requirements');
+  assert.equal(t.columns.id, 'A');
+  assert.equal(t.columns.requirement, 'B');
+  assert.equal(t.lastDataRow, 3);
 });
 
 // ------------------------------------------------------------ a whole tender workbook
 
-test('a whole tender maps to exactly the tables lib/source.mjs used to hard-code', () => {
+test('a whole tender maps to exactly the tables the digest names', () => {
     const map = proposeMap(snapshotOf(readWorkbook(SAMPLE) && SAMPLE, 'specs/rfp-0042-sample-tender.xlsx'));
-    assert.deepEqual(validateMap(map), []);
 
     const req = map.tables.filter(t => t.role === 'requirements');
-    assert.deepEqual(req.map(t => csvNameFor(t)), [
-      '03-requirements.csv', '04-non-functional-compliance.csv', '07-vendor-response-evaluation.csv',
+    assert.deepEqual(req.map(t => t.sheet), [
+      '2 Requirements', '3 Non-functional & Compliance', '6 Vendor Response & Evaluation',
     ]);
 
-    // …and the context tables lib/source.mjs looked up by name, now derived from the workbook.
-    const ctx = Object.fromEntries(map.tables.filter(t => t.role === 'context').map(t => [t.kind, csvNameFor(t)]));
-    assert.equal(ctx.integrations, '05-integrations.csv');
-    assert.equal(ctx.migration, '06-migration-inventory.csv');
-    assert.equal(ctx.glossary, '08-glossary.csv');
+    // …and the context tables, each recognised by kind from its own sheet name.
+    const ctx = Object.fromEntries(map.tables.filter(t => t.role === 'context').map(t => [t.kind, t.sheet]));
+    assert.equal(ctx.integrations, '4 Integrations');
+    assert.equal(ctx.migration, '5 Migration Inventory');
+    assert.equal(ctx.glossary, '7 Glossary');
 
     // The hidden answer key is ignored, so no agent can ever read it.
     assert.deepEqual(map.ignored.map(i => i.sheet), ['_answer_key']);
@@ -257,8 +268,11 @@ test('a whole tender maps to exactly the tables lib/source.mjs used to hard-code
     assert.equal(requirements.columns.compliance, 'J');
     assert.equal(requirements.columns.comment, 'K');
     assert.equal(requirements.columns.effort, 'L');
-    assert.deepEqual(requirements.columns.cost, ['M', 'N']);
-    assert.deepEqual(requirements.tokens.priority, ['Must', 'Should', 'Could']);
+    assert.deepEqual(requirements.columns.commercial, ['M', 'N']);
+    // Leftover columns by fixed rule: the commercial-header heuristic already caught M/N above;
+    // every other leftover (Area, Sub-area) lands in context, with no operator "ignore" choice.
+    assert.deepEqual(requirements.columns.context, ['B', 'C']);
+    assert.equal(requirements.tokens.priority, undefined, 'priority tokens are client pass-through and dropped from the map');
     assert.deepEqual(requirements.tokens.compliance, ['Stock', 'Config', 'Plugin', 'Custom', 'Not offered']);
 
     // The vendor-response sheet's table really does start at row 20.
