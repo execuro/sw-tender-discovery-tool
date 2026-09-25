@@ -1179,9 +1179,32 @@ function renderChat() {
   }
   host.scrollTop = host.scrollHeight;
 }
+/** working | queued | done | aborted | null, from the live run, the queue and the chat (never from e.queued). */
+function batchState(id) {
+  if (!id) return null;
+  if (S.run && S.run.id === id) return 'working';
+  if ((S.queue || []).includes(id)) return 'queued';
+  if (S.chat.some(x => x.batch === id && x.type === 'system' && /aborted/.test(x.text || ''))) return 'aborted';
+  if (S.chat.some(x => x.batch === id && x.type === 'reply')) return 'done';
+  return null;
+}
+function elapsedText(startedAt) {
+  const s = Math.max(0, Math.floor((Date.now() - Date.parse(startedAt)) / 1000));
+  return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+}
+function batchBadge(st) {
+  if (!st) return null;
+  if (st !== 'working') return el('span', { class: 'badge bs-' + st }, st);
+  const parts = ['working', S.run.stage, S.run.startedAt ? elapsedText(S.run.startedAt) : null].filter(Boolean);
+  return el('span', { class: 'badge bs-working' }, el('span', { class: 'pulse-dot' }), el('span', { class: 'bs-text', dataset: { started: S.run.startedAt || '', prefix: parts.slice(0, S.run.stage ? 2 : 1).join(' · ') } }, parts.join(' · ')));
+}
+function tickBatchElapsed() {
+  document.querySelectorAll('.bs-working .bs-text').forEach(n => { const d = n.dataset; n.textContent = d.started ? `${d.prefix} · ${elapsedText(d.started)}` : d.prefix; });
+}
 function batchBubble(e) {
-  const label = { intake: 'intake', analyze: 'analyse', reestimate: 're-estimate', notes: 'you' }[e.kind] || e.kind || 'batch';
-  const m = el('div', { class: 'msg user' + (e.kind === 'notes' ? '' : ' auto') }, el('div', { class: 'm-head' }, `${label} · ${e.id || ''}`, e.queued ? el('span', { class: 'badge' }, 'queued') : null));
+  const label = { intake: 'intake', analyze: 'analyse', reestimate: 're-estimate', export: 'export', notes: 'you' }[e.kind] || e.kind || 'batch';
+  const st = batchState(e.id);
+  const m = el('div', { class: 'msg user' + (e.kind === 'notes' ? '' : ' auto') + (st === 'working' ? ' working' : '') }, el('div', { class: 'm-head' }, `${label} · ${e.id || ''}`, batchBadge(st)));
   if (e.kind === 'intake') m.append(el('div', { class: 'm-body' }, 'Intake: build the working document from the confirmed mapping.'));
   else if (e.kind === 'analyze') m.append(el('div', { class: 'm-body' }, 'Analyse: assess coverage, confidence and effort for every queued item; propose assumptions and client questions.'));
   else if (e.kind === 'reestimate') m.append(el('div', { class: 'm-body' }, 'Re-estimate the items a profile change or answered question marked.'));
@@ -1261,7 +1284,7 @@ function connect() {
   es.addEventListener('doc', (ev) => applyDoc(JSON.parse(ev.data)));
   es.addEventListener('chat', (ev) => { S.chat.push(JSON.parse(ev.data)); renderChat(); if (!S.model) renderDoc(); });
   es.addEventListener('progress', () => { /* the chat event carries it too */ });
-  es.addEventListener('run', (ev) => { const r = JSON.parse(ev.data); S.queue = r.queue || []; S.run = r.active ? { id: r.active, kind: r.kind, stage: r.stage || null } : null; renderBanners(); renderHeader(); if (!S.model) renderDoc(); if (!S.run) maybeAutoSendDecisions(); });
+  es.addEventListener('run', (ev) => { const r = JSON.parse(ev.data); S.queue = r.queue || []; S.run = r.active ? { id: r.active, kind: r.kind, stage: r.stage || null, startedAt: r.startedAt || null } : null; renderBanners(); renderHeader(); renderChat(); if (!S.model) renderDoc(); if (!S.run) maybeAutoSendDecisions(); });
   es.addEventListener('agent', (ev) => { const a = JSON.parse(ev.data); S.agent.present = a.present; S.agent.everPolled = a.everPolled || S.agent.everPolled; renderBanners(); });
   es.addEventListener('queued', (ev) => { S.queuedWrites = JSON.parse(ev.data).count || 0; renderBanners(); });
   es.addEventListener('notes', (ev) => { const n = JSON.parse(ev.data); if (n.tab && n.tab !== S.tab) { S.notes = n.notes || []; rebindNotes(); renderQueued(); markNoted(); } });
@@ -1289,8 +1312,8 @@ function heartbeat() {
     .then(r => r.json()).then(j => {
       let dirty = S.serverGone; S.serverGone = false;
       if (j.agent && j.agent.present !== S.agent.present) { S.agent.present = j.agent.present; dirty = true; }
-      if ('run' in j && (j.run?.id || null) !== (S.run?.id || null)) { S.run = j.run ? { id: j.run.id, kind: j.run.kind, stage: j.run.stage || null } : null; dirty = true; if (!S.run) maybeAutoSendDecisions(); }
-      if (dirty) renderBanners();
+      if ('run' in j && (j.run?.id || null) !== (S.run?.id || null)) { S.run = j.run ? { id: j.run.id, kind: j.run.kind, stage: j.run.stage || null, startedAt: j.run.startedAt || null } : null; dirty = true; if (!S.run) maybeAutoSendDecisions(); }
+      if (dirty) { renderBanners(); renderChat(); }
     })
     .catch(() => { S.serverGone = true; renderBanners(); });
 }
@@ -1343,5 +1366,5 @@ $('#stop-btn').addEventListener('click', async () => {
   try { await api('/api/close', {}); } catch { /* already gone */ }
 });
 
-load().then(() => { connect(); heartbeat(); setInterval(heartbeat, 5000); setInterval(renderBanners, 15000); })
+load().then(() => { connect(); heartbeat(); setInterval(heartbeat, 5000); setInterval(renderBanners, 15000); setInterval(tickBatchElapsed, 1000); })
   .catch(e => { document.body.append(el('div', { class: 'overlay' }, 'Could not load the session: ' + e.message)); });

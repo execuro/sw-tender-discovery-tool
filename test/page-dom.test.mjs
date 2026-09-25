@@ -13,6 +13,16 @@ const HTML = fs.readFileSync(path.join(HERE, '..', 'page', 'index.html'), 'utf8'
 const APP_JS = fs.readFileSync(path.join(HERE, '..', 'page', 'app.js'), 'utf8');
 const APP_CSS = fs.readFileSync(path.join(HERE, '..', 'page', 'app.css'), 'utf8');
 
+test('batch bubble badge derives from S.run.id / S.queue, not e.queued, and ticks elapsed time', () => {
+  const fn = APP_JS.slice(APP_JS.indexOf('function batchBubble'), APP_JS.indexOf('function replyBubble'));
+  assert.ok(!/e\.queued/.test(fn));
+  const st = APP_JS.slice(APP_JS.indexOf('function batchState'), APP_JS.indexOf('function elapsedText'));
+  assert.ok(/S\.run\.id === id/.test(st) && /S\.queue/.test(st));
+  assert.ok(/export: 'export'/.test(fn));
+  assert.ok(/setInterval\(tickBatchElapsed/.test(APP_JS));
+  assert.ok(/\.pulse-dot/.test(APP_CSS) && /\.msg\.user\.working/.test(APP_CSS));
+});
+
 test('index.html has no #notes-panel, #notes, #send-btn or #free-note-btn (Notes panel removed)', () => {
   for (const id of ['id="notes-panel"', 'id="notes"', 'id="send-btn"', 'id="free-note-btn"']) {
     assert.ok(!HTML.includes(id), `${id} should be gone`);

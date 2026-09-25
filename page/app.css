@@ -494,3 +494,11 @@ dl.run-report dd { margin: 0; }
 .wizard-error { color: var(--bad); font-size: 12px; min-height: 1.2em; }
 .field-hint { color: var(--muted); font-size: 11.5px; margin: -6px 0 2px; }
 .wizard-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
+
+.msg.user.working { border-left: 3px solid var(--accent, #5b3fc4); }
+.badge.bs-working { background: #ede9fe; color: #5b3fc4; gap: 5px; }
+.badge.bs-queued { background: var(--warn-soft); color: var(--warn); }
+.badge.bs-done { background: var(--surface-2); color: var(--muted); }
+.badge.bs-aborted { background: var(--bad-soft); color: var(--bad); }
+.pulse-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: bs-pulse 1.2s ease-in-out infinite; }
+@keyframes bs-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }

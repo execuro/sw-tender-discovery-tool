@@ -5,6 +5,29 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Changed
+
+- **Analyze chunks hold up to 45 items** (was about 15).
+
+### Fixed
+
+- **No re-queue loop.** A `*` re-estimate mark now walks the document
+  (items already written since the mark are skipped) and clears; a `reopened`
+  item applied unchanged is not queued again until the operator changes it or
+  a per-item mark names it.
+- **No duplicate client questions.** `apply` reuses an existing CQ with the
+  same normalised text and an overlapping item set, unions item ids into it,
+  appends an item reported `blockedBy` an existing CQ, and never re-blocks an
+  item on an answered one.
+
+### Added
+
+- **The running batch is marked in the chat.** Each batch bubble shows its live
+  state from the run and the queue: `working` (pulsing dot, stage, elapsed
+  time), `queued`, `done` or `aborted`; the working bubble is highlighted. The
+  `run` event and `info().run` carry `startedAt`. The `export` batch now has
+  its label.
+
 ## [0.2.0] - 2026-09-25
 
 ### Fixed

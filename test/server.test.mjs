@@ -303,6 +303,25 @@ test('P-2: a notes batch with decision entries applies accept/reject in one writ
   assert.ok(analyzeIds.length <= 1, `expected at most one analyze batch, got ${JSON.stringify(lock.body.queue)}`);
 });
 
+test('server: run event and info().run carry startedAt', { skip: !(await canBind()) && 'cannot bind 127.0.0.1 in this environment' }, async (t) => {
+  const root = host();
+  const realExit = process.exit;
+  process.exit = () => {};
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  const url = session.url;
+  const heartbeat = setInterval(() => fetch(url + 'api/heartbeat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).catch(() => {}), 300);
+  t.after(async () => { await cleanup({ heartbeat, session, root }); process.exit = realExit; });
+  const events = [];
+  const orig = session.broadcast.bind(session);
+  session.broadcast = (name, data) => { if (name === 'run') events.push(data); return orig(name, data); };
+  await j(url, '/api/batch', { kind: 'reestimate' });
+  const r = await j(url, '/api/next?wait=2', undefined, 'GET');
+  assert.equal(r.body.event, 'batch');
+  const iso = /^\d{4}-\d\d-\d\dT/;
+  assert.match(session.info().run.startedAt, iso);
+  assert.ok(events.some(e => e.active && iso.test(e.startedAt)), JSON.stringify(events));
+});
+
 test('server: operator confirm is saved at once while an agent run holds the lock and survives the reply', { skip: !(await canBind()) && 'cannot bind 127.0.0.1 in this environment' }, async (t) => {
   const root = host();
   const realExit = process.exit;
@@ -615,3 +634,23 @@ test('only the newest session banner survives; older boundaries collapse to one 
   assert.deepEqual(out.map(e => e.text ?? e.md), ['one', 'previous session', 'two', 'session resumed on http://127.0.0.1:3/']);
 });
 
+
+test('IN-11: a reopened item applied unchanged is not re-queued after its chunk finishes', { skip: !(await canBind()) && 'cannot bind 127.0.0.1 in this environment' }, async (t) => {
+  const root = host();
+  const analysisFile = path.join(root, ANALYSIS);
+  writeFileSync(analysisFile, readFileSync(analysisFile, 'utf8').replace(
+    '| kb: Stock display · Storefront | estimated |', '| kb: Stock display · Storefront | reopened |'), 'utf8');
+  const realExit = process.exit;
+  process.exit = () => {};
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  const url = session.url;
+  t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
+
+  const next = await j(url, '/api/next?wait=2', undefined, 'GET');
+  assert.equal(next.body.event, 'batch');
+  assert.deepEqual(next.body.batch.items, ['HIB-02']);
+  await j(url, '/api/agent/reply', { markdown: 'done', batch: next.body.batch.id });
+  await new Promise(r => setTimeout(r, 30));
+  const lock = await j(url, '/api/lock');
+  assert.equal(lock.body.queue.length, 0, 'the unchanged reopened item is not queued again');
+});

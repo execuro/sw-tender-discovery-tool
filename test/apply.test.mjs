@@ -631,3 +631,49 @@ test('apply dedupes a reference the item already carries instead of piling up a 
     assert.ok(afterSecond.references.includes('project: a new one'), 'a genuinely new reference in the same report still lands');
   } finally { cleanup(); }
 });
+
+const CQ_REPORT = () => ({ cause: 'x', items: [{ id: 'CMP-01', coverage: 'OOTB', confidence: 'low', size: 'S', blockedBy: 'new:0', references: ['project: purge job'] }], questions: [
+  { items: ['CMP-01'], question: 'Is a 7-year retention mandatory?', options: [{ key: 'A', text: 'yes', effect: 'custom archive' }, { key: 'B', text: 'no', effect: 'stock log suffices' }], fallback: 'B' },
+] });
+
+test('CQ idempotence: applying the same report twice adds no question', () => {
+  const { root, doc, cleanup } = host();
+  try {
+    assert.equal(apply({ root, doc, report: CQ_REPORT() }).ok, true);
+    const before = docModel(doc).questions.length;
+    const r = apply({ root, doc, report: CQ_REPORT() });
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.questions, []);
+    assert.equal(docModel(doc).questions.length, before);
+    assert.equal(docModel(doc).items.find(i => i.id === 'CMP-01').status.cq, 'CQ-2');
+  } finally { cleanup(); }
+});
+
+test('CQ idempotence: same text with different case/whitespace and an overlapping item merges; new items are unioned', () => {
+  const { root, doc, cleanup } = host();
+  try {
+    apply({ root, doc, report: CQ_REPORT() });
+    const rep = CQ_REPORT();
+    rep.questions[0].items = ['CMP-01', 'HIB-03'];
+    rep.questions[0].question = '  is a 7-YEAR   retention mandatory? ';
+    rep.items.push({ id: 'HIB-03', coverage: 'OOTB', confidence: 'low', size: 'S', blockedBy: 'new:0', references: ['project: x'] });
+    const r = apply({ root, doc, report: rep });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.deepEqual(r.questions, []);
+    const cq = docModel(doc).questions.find(q => q.id === 'CQ-2');
+    assert.deepEqual(cq.items, ['CMP-01', 'HIB-03']);
+    assert.equal(docModel(doc).items.find(i => i.id === 'HIB-03').status.cq, 'CQ-2');
+  } finally { cleanup(); }
+});
+
+test('CQ idempotence: re-apply after a failed check adds no question, and blockedBy CQ-n appends the item', () => {
+  const { root, doc, cleanup } = host();
+  try {
+    apply({ root, doc, report: CQ_REPORT() });
+    const r = apply({ root, doc, report: { cause: 'x', items: [{ id: 'HIB-03', coverage: 'OOTB', confidence: 'low', size: 'S', blockedBy: 'CQ-2', references: ['project: x'] }] } });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.deepEqual(docModel(doc).questions.find(q => q.id === 'CQ-2').items, ['CMP-01', 'HIB-03']);
+    assert.equal(apply({ root, doc, report: CQ_REPORT() }).ok, true);
+    assert.equal(docModel(doc).questions.filter(q => q.question === 'Is a 7-year retention mandatory?').length, 1);
+  } finally { cleanup(); }
+});
