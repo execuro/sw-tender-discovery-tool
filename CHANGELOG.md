@@ -5,6 +5,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-25
+
 ### Fixed
 
 - **Confirm saves at once during an analysis run.** `confirm`, `unconfirm` and
@@ -100,8 +102,6 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   The report JSON key stays `effort`. `lib/parse.mjs` still reads a document
   written in the pre-rename header/order; every renderer always writes the
   new one, so an old document migrates on its next write.
-
-## [0.2.0] - 2026-09-23
 
 ### Changed
 
@@ -286,5 +286,6 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `start` now refuses a document outside the project root with a usage error
   instead of opening a session whose state lands where nothing will look for it.
 
-[0.2.0]: https://github.com/execuro/sw-tender-discovery-tool/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/execuro/sw-tender-discovery-tool/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/execuro/sw-tender-discovery-tool/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/execuro/sw-tender-discovery-tool/compare/v0.1.0...v0.1.1
