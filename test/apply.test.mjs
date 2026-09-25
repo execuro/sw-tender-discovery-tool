@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { profilePath } from '../lib/profile.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -238,8 +239,8 @@ test('D-5: apply refuses size in the profile regime, pd in the T-shirt regime, a
 test('D-5: apply refuses size in the profile regime', () => {
   const { root, doc, cleanup } = host();
   try {
-    fs.mkdirSync(path.dirname(path.join(root, 'specs', 'rfp-partner-profile.md')), { recursive: true });
-    fs.writeFileSync(path.join(root, 'specs', 'rfp-partner-profile.md'),
+    fs.mkdirSync(path.dirname(profilePath(root)), { recursive: true });
+    fs.writeFileSync(profilePath(root),
       '---\ncalibration: { small: 2, big: 20 }\noverhead: 10\nbuffer: { percent: 5, mode: folded }\nisv: []\nassets: []\n---\n');
     const r = apply({ root, doc, report: { cause: 'x', items: [{ id: 'HIB-03', coverage: 'Extension', size: 'S' }] } });
     assert.equal(r.ok, false);
@@ -261,8 +262,8 @@ test('D-6: OOTB coverage auto-fills the effort — — (0 PD) in T-shirt, 0 PD i
 test('D-6 (profile regime): OOTB coverage auto-fills 0 PD with no pd sent', () => {
   const { root, doc, cleanup } = host();
   try {
-    fs.mkdirSync(path.dirname(path.join(root, 'specs', 'rfp-partner-profile.md')), { recursive: true });
-    fs.writeFileSync(path.join(root, 'specs', 'rfp-partner-profile.md'),
+    fs.mkdirSync(path.dirname(profilePath(root)), { recursive: true });
+    fs.writeFileSync(profilePath(root),
       '---\ncalibration: { small: 2, big: 20 }\noverhead: 10\nbuffer: { percent: 5, mode: folded }\nisv: []\nassets: []\n---\n');
     const r = apply({ root, doc, report: { cause: 'x', items: [{ id: 'HIB-03', coverage: 'OOTB', references: ['kb: Some feature'] }] } });
     assert.equal(r.ok, true, JSON.stringify(r));
@@ -402,8 +403,8 @@ test('D-12: a CQ option needs a non-empty effect', () => {
 test('AC-14: a profile change reopens a confirmed item whose Effort it changes; re-applying the same report a second time leaves it reopened, not silently re-confirmed', () => {
   const { root, doc, cleanup } = host();
   try {
-    fs.mkdirSync(path.dirname(path.join(root, 'specs', 'rfp-partner-profile.md')), { recursive: true });
-    fs.writeFileSync(path.join(root, 'specs', 'rfp-partner-profile.md'),
+    fs.mkdirSync(path.dirname(profilePath(root)), { recursive: true });
+    fs.writeFileSync(profilePath(root),
       '---\ncalibration: { small: 2, big: 20 }\noverhead: 10\nbuffer: { percent: 5, mode: folded }\nisv: []\nassets: []\n---\n');
     apply({ root, doc, report: { cause: 'profile changed', items: [{ id: 'HIB-01', pd: 2 }] } });
     const changed = docModel(doc).items.find(i => i.id === 'HIB-01');
@@ -419,8 +420,8 @@ test('#9/AC-14: a regime switch that leaves the PD figure unchanged (0 -> 0) doe
   const { root, doc, cleanup } = host();
   try {
     // HIB-01 is `confirmed`, OOTB, `— (0 PD)` (T-shirt: size '—', pd 0).
-    fs.mkdirSync(path.dirname(path.join(root, 'specs', 'rfp-partner-profile.md')), { recursive: true });
-    fs.writeFileSync(path.join(root, 'specs', 'rfp-partner-profile.md'),
+    fs.mkdirSync(path.dirname(profilePath(root)), { recursive: true });
+    fs.writeFileSync(profilePath(root),
       '---\ncalibration: { small: 2, big: 20 }\noverhead: 10\nbuffer: { percent: 5, mode: folded }\nisv: []\nassets: []\n---\n');
     // No `pd` sent: OOTB auto-fills 0 PD in the profile regime too (D-6) — same PD, no size label.
     apply({ root, doc, report: { cause: 'profile changed', items: [{ id: 'HIB-01', coverage: 'OOTB' }] } });

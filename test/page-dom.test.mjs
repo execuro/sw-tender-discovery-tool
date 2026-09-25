@@ -242,3 +242,11 @@ test('app.js: confirmItems returns on a 202 without an unconditional load()', ()
   assert.ok(fn.indexOf('r.queued') < fn.indexOf('await load()'), 'the queued check precedes load()');
   assert.match(fn, /captureScroll\(\)[\s\S]*restoreScroll/);
 });
+
+test('app.js: answering a question queues a decision, with no API call, load() or renderDoc()', () => {
+  const start = APP_JS.indexOf('function answerQuestion');
+  const fn = APP_JS.slice(start, APP_JS.indexOf('\nfunction refreshQuestionCard', start));
+  assert.match(fn, /toggleAnswer\(S\.notes, q, option\)/);
+  assert.match(fn, /refreshQuestionCard\(q\.id\)/);
+  assert.ok(!/api\(|load\(|renderDoc\(/.test(fn), 'answerQuestion must not call api/load/renderDoc');
+});

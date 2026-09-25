@@ -303,6 +303,24 @@ test('P-2: a notes batch with decision entries applies accept/reject in one writ
   assert.ok(analyzeIds.length <= 1, `expected at most one analyze batch, got ${JSON.stringify(lock.body.queue)}`);
 });
 
+test('a notes batch with an answer decision applies ops.answer once; a repeat is reported, not silent', { skip: !(await canBind()) && 'cannot bind 127.0.0.1 in this environment' }, async (t) => {
+  const root = host();
+  const realExit = process.exit;
+  process.exit = () => {};
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  const url = session.url;
+  t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
+  const d = { type: 'decision', action: 'answer', cq: 'CQ-1', key: 'B', item: null };
+  let r = await j(url, '/api/batch', { kind: 'notes', notes: [d], chat: '' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.decisionsApplied, 1);
+  assert.match(readFileSync(path.join(root, ANALYSIS), 'utf8'), /Answered \d{4}-\d{2}-\d{2}: B/);
+  r = await j(url, '/api/batch', { kind: 'notes', notes: [d], chat: '' });
+  assert.equal(r.body.decisionsApplied, 0);
+  const chat = readFileSync(path.join(session.dir, 'chat.jsonl'), 'utf8');
+  assert.match(chat, /answer CQ-1 \(B\) not applied/);
+});
+
 test('server: run event and info().run carry startedAt', { skip: !(await canBind()) && 'cannot bind 127.0.0.1 in this environment' }, async (t) => {
   const root = host();
   const realExit = process.exit;
@@ -653,4 +671,34 @@ test('IN-11: a reopened item applied unchanged is not re-queued after its chunk 
   await new Promise(r => setTimeout(r, 30));
   const lock = await j(url, '/api/lock');
   assert.equal(lock.body.queue.length, 0, 'the unchanged reopened item is not queued again');
+});
+
+test('the partner profile survives a page reload and a new session on another document (var/ store)', { skip: !(await canBind()) && 'cannot bind 127.0.0.1 in this environment' }, async (t) => {
+  const root = host();
+  const realExit = process.exit;
+  process.exit = () => {};
+  const first = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  t.after(() => { process.exit = realExit; });
+  let r = await j(first.url, '/api/profile');
+  assert.equal(r.body.profile, null);
+  assert.equal(r.body.path, 'var/sw-ai-sdk/tender/partner-profile.md', 'the page is told where the profile lives');
+  r = await j(first.url, '/api/profile', { calibration: { small: 1.5, big: 15 }, overhead: 10, buffer: { percent: 10, mode: 'folded' }, isv: [], assets: [] }, 'PUT');
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(existsSync(path.join(root, 'var', 'sw-ai-sdk', 'tender', 'partner-profile.md')), true);
+  assert.equal(existsSync(path.join(root, 'specs', 'rfp-partner-profile.md')), false, 'nothing is written under specs/');
+  // a reload is a fresh GET on the same server
+  r = await j(first.url, '/api/profile');
+  assert.equal(r.body.profile.calibration.big, 15);
+  await cleanup({ session: first, root: null });
+
+  // a second tender under the same root, in a new server process, sees the same profile
+  const OTHER = 'specs/rfp-0102-other-analysis.md';
+  copyFileSync(path.join(root, ANALYSIS), path.join(root, OTHER));
+  const second = await startServer({ cmd: 'start', doc: OTHER, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  t.after(async () => { await cleanup({ session: second, root }); });
+  r = await j(second.url, '/api/profile');
+  assert.equal(r.body.profile.calibration.big, 15);
+  assert.equal(r.body.legacy, undefined);
+  const s = await j(second.url, '/api/session');
+  assert.equal(s.body.session.doc.regime, 'profile');
 });

@@ -7,7 +7,7 @@ import {
   COVERAGE_VALUES, SIZES, TABS, emptyFilters, matchesFilters, itemMarkers, bulkConfirmPlan,
   waitingProposalIds, tabProposalSummary, openQuestionItemIds, parseRunReport, emptyProfileForm, profileToForm, formToProfile,
   groupByTopic, parseGlossary, markGlossary, changedIdsFromReply, lastRunChangedIds,
-  queuedRows, panelState, canSend, toggleDecision, decisionFor, decisionCount, tabDecisionCount,
+  queuedRows, panelState, canSend, toggleDecision, decisionFor, answerFor, toggleAnswer, decisionCount, tabDecisionCount,
 } from './view.mjs';
 
 // P-2: once queued decisions (accept/reject on suggestion chips) exceed this count, the queue
@@ -29,7 +29,7 @@ const FIXED_TABS = [
 // ---------------------------------------------------------------- state
 const S = {
   session: null, analysis: null, source: null, model: null, notes: [], chat: [],
-  proposals: [], profile: null, profileChecked: false,
+  proposals: [], profile: null, profilePath: null, profileLegacy: false, profileChecked: false,
   changed: new Set(),
   area: { active: null }, // one of FIXED_TABS' keys, plus 'overview'
   filters: emptyFilters(),
@@ -117,6 +117,7 @@ function noteContext(block) {
 }
 function rebindNotes() {
   for (const n of S.notes) {
+    if (n.type === 'decision' && n.action === 'answer') { const q = questionById(n.cq); n.missing = !q || Boolean(q.answered); continue; }
     if (!n.block || n.kind === 'free') continue;
     n.missing = !S.model || !(blockById(n.block) || itemById(n.block) || questionById(n.block));
   }
@@ -153,15 +154,16 @@ function queuedRow(n, row) {
 function removeQueued(n) {
   S.notes = S.notes.filter(x => x !== n);
   saveNotes(); renderQueued(); markNoted();
-  if (n.type === 'decision') refreshSuggestionChip(n.proposal);
+  if (n.type === 'decision' && n.action === 'answer') refreshQuestionCard(n.cq);
+  else if (n.type === 'decision') refreshSuggestionChip(n.proposal);
 }
 function clearQueued() {
   if (!S.notes.length) return;
   if (!confirm(`Remove all ${S.notes.length} queued item(s)? Nothing is sent to the agent.`)) return;
-  const decisionIds = S.notes.filter(n => n.type === 'decision').map(n => n.proposal);
+  const removed = S.notes.filter(n => n.type === 'decision');
   S.notes = [];
   saveNotes(); renderQueued(); markNoted();
-  for (const id of decisionIds) refreshSuggestionChip(id);
+  for (const n of removed) { if (n.action === 'answer') refreshQuestionCard(n.cq); else refreshSuggestionChip(n.proposal); }
 }
 function updateSendButton() {
   const b = $('#chat-send'), n = S.notes.length, text = $('#chat-text') && $('#chat-text').value || '';
@@ -459,8 +461,8 @@ function suggestionChipBody(p) {
       el('span', { class: 'muted pd-saved' }, `−${num(p.pdSaved)} PD`)),
     el('div', { class: 'stmt' }, p.statement),
     el('div', { class: 'chip-actions' },
-      accept,
-      el('button', { class: 'btn sm subtle', type: 'button', title: 'Reject this suggestion', onclick: () => toggleProposalDecision(p, 'reject') }, '×')),
+      el('button', { class: 'btn sm subtle', type: 'button', title: 'Reject this suggestion', onclick: () => toggleProposalDecision(p, 'reject') }, '×'),
+      accept),
   ];
 }
 function assumptionsCell(item) {
@@ -563,9 +565,19 @@ function suggestionsSummaryBar(tab, summary, queuedCount) {
     el('button', { class: 'btn sm primary', type: 'button', onclick: () => acceptAllOnTab(tab, summary) }, 'Accept all on this tab'),
     el('label', { class: 'chk', title: 'show only items with a waiting suggestion' }, toggle, 'has suggestions'));
 }
-async function answerQuestion(q, option) {
-  try { await api(`/api/question/${encodeURIComponent(q.id)}/answer`, { option }); await load(); }
-  catch (e) { toast(`Answer failed: ${e.message}`, 'bad'); }
+/** Queues (or changes, or undoes) the answer to a question: no API call, no `load()`, no
+ * `renderDoc()` — the card updates in place and the queue applies it on Send. */
+function answerQuestion(q, option) {
+  S.notes = toggleAnswer(S.notes, q, option);
+  S.queuedOpen = true;
+  saveNotes(); renderQueued();
+  refreshQuestionCard(q.id);
+  maybeAutoSendDecisions();
+}
+function refreshQuestionCard(cq) {
+  const q = questionById(cq);
+  if (!q) return;
+  document.querySelectorAll(`#doc .question.blk[data-id="${CSS.escape(cq)}"]`).forEach(card => card.replaceWith(questionCard(q)));
 }
 
 // ---------------------------------------------------------------- item row rendering
@@ -694,12 +706,17 @@ function questionCard(q) {
     q.items.length ? el('span', { class: 'q-blocks' }, ...q.items.map(id => el('a', { href: '#' + id, dataset: { goto: id } }, id))) : null));
   card.append(el('div', { class: 'q-text' }, mdInline(q.question)));
   const list = el('div', { class: 'options' });
+  const queued = q.answered ? null : answerFor(S.notes, q.id);
   for (const o of q.options || []) {
-    list.append(el('label', { class: 'option opt' + (o.checked ? ' selected' : '') },
-      el('input', { type: 'radio', name: 'q-' + q.id, value: o.key, ...(o.checked ? { checked: '' } : {}), disabled: S.closed || q.answered ? '' : null, onchange: () => answerQuestion(q, o.key) }),
+    const on = queued ? queued.key === o.key : o.checked;
+    list.append(el('label', { class: 'option opt' + (on ? ' selected' : '') },
+      el('input', { type: 'radio', name: 'q-' + q.id, value: o.key, ...(on ? { checked: '' } : {}), disabled: S.closed || q.answered ? '' : null, onchange: () => answerQuestion(q, o.key) }),
       el('span', { class: 'opt-id' }, o.key), el('span', { class: 'opt-text' }, o.text), el('span', { class: 'muted' }, ` — effect: ${o.effect}`)));
   }
   card.append(list);
+  if (queued) card.append(el('div', { class: 'chip-pending accept' },
+    el('span', { class: 'chip-pending-label' }, '✓ answer queued'),
+    el('button', { class: 'btn sm subtle chip-undo', type: 'button', title: 'Undo', onclick: () => answerQuestion(q, queued.key) }, '↺')));
   if (q.fallback) card.append(el('div', { class: 'muted' }, `Fallback: ${q.fallback}`));
   if (answered) card.append(answered);
   return card;
@@ -961,6 +978,7 @@ function renderWizard() {
   const skip = el('button', { class: 'btn subtle' }, 'Skip for now');
   skip.addEventListener('click', () => { S.wizardOpen = false; S.wizardForm = null; lsSet(LS.wizardSkipped, 1); renderDoc(); });
   box.append(el('div', { class: 'wizard-actions' }, save, skip));
+  if (S.profilePath) box.append(el('p', { class: 'muted wizard-where' }, `Saved in ${S.profilePath} — one profile per project, shared by every tender${S.profileLegacy ? ' (read from the old specs/ location until the next save)' : ''}.`));
   overlay.append(box);
   return overlay;
 }
@@ -1035,7 +1053,7 @@ async function refreshProposals() { try { const r = await api('/api/proposals');
  * session or by another tab is never missed just because this tab already skipped the wizard once.
  */
 async function loadProfile() {
-  try { const r = await api('/api/profile'); S.profile = r.profile || null; }
+  try { const r = await api('/api/profile'); S.profile = r.profile || null; S.profilePath = r.path || null; S.profileLegacy = Boolean(r.legacy); }
   catch { /* endpoint not up yet */ }
   return S.profile;
 }

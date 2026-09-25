@@ -7,6 +7,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- **Answering a client question queues the answer.** Picking an option adds one `decision` entry (`action: answer`) to the Queued (n) block, counted in `Send (n)`; the card shows "✓ answer queued" with an undo, updates in place (no scroll jump, no reload) and keeps the selection across a reload. The runtime applies it with the other queued decisions on Send; an answer that fails is logged and posted to the chat.
+
+- **The partner profile lives in `var/`.** `var/sw-ai-sdk/tender/partner-profile.md` under the project root — one profile per checkout, shared by every tender, gitignored through Shopware's `/var/*` — instead of `specs/rfp-partner-profile.md`, which a tracked copy could clobber. An old `specs/` file is still read (`GET /api/profile` says `legacy: true`) until the next save writes the new location; `GET /api/profile` returns `path`, and the wizard shows it.
+
 - **Analyze chunks hold up to 45 items** (was about 15).
 
 ### Fixed

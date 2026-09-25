@@ -356,6 +356,17 @@ export function queuedRows(notes = [], model = null) {
     ...((model?.questions || []).map(q => q.id)),
   ]);
   return (notes || []).map(n => {
+    if (n && n.type === 'decision' && n.action === 'answer') {
+      const q = (model?.questions || []).find(x => x.id === n.cq);
+      return {
+        id: n.id,
+        missing: !q || Boolean(q.answered),
+        ref: n.item || null,
+        kind: null,
+        text: `Answer ${n.cq} · option ${n.key}`,
+        title: n.statement || '',
+      };
+    }
     if (n && n.type === 'decision') {
       const label = n.action === 'reject' ? 'Reject' : 'Accept';
       const pd = numPd(n.pdSaved);
@@ -390,7 +401,7 @@ export function queuedRows(notes = [], model = null) {
  */
 export function toggleDecision(notes, proposal, action) {
   const list = notes || [];
-  const idx = list.findIndex(n => n && n.type === 'decision' && n.proposal === proposal.id);
+  const idx = list.findIndex(n => n && n.type === 'decision' && n.action !== 'answer' && n.proposal === proposal.id);
   if (idx >= 0) {
     if (list[idx].action === action) return list.filter((_, i) => i !== idx);
     const updated = list.slice();
@@ -408,7 +419,29 @@ export function toggleDecision(notes, proposal, action) {
 /** The pending decision entry for one proposal, or `null` — drives the suggestion chip's queued
  * state (page/app.js `suggestionChipBody`). */
 export function decisionFor(notes, proposalId) {
-  return (notes || []).find(n => n && n.type === 'decision' && n.proposal === proposalId) || null;
+  return (notes || []).find(n => n && n.type === 'decision' && n.action !== 'answer' && n.proposal === proposalId) || null;
+}
+
+/** The queued answer entry for one question, or `null`. */
+export function answerFor(notes, cq) {
+  return (notes || []).find(n => n && n.type === 'decision' && n.action === 'answer' && n.cq === cq) || null;
+}
+
+/** Queues (or replaces, or undoes) the answer for one client question: one entry per question;
+ * picking the same option again removes it. `q` is the model question (`{ id, question, items }`). */
+export function toggleAnswer(notes, q, key) {
+  const list = notes || [];
+  const idx = list.findIndex(n => n && n.type === 'decision' && n.action === 'answer' && n.cq === q.id);
+  if (idx >= 0) {
+    if (list[idx].key === key) return list.filter((_, i) => i !== idx);
+    const updated = list.slice();
+    updated[idx] = { ...updated[idx], key };
+    return updated;
+  }
+  return [...list, {
+    id: 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+    type: 'decision', action: 'answer', cq: q.id, key, item: (q.items || [])[0] ?? null, statement: q.question || '',
+  }];
 }
 
 /** Count of queued decisions in `notes` — `Send (n)` and the auto-send threshold both read this. */
