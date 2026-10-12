@@ -37,7 +37,7 @@ function host() {
 async function cleanup({ heartbeat, session, root }) {
   if (heartbeat) clearInterval(heartbeat);
   try { session.shutdown('test end'); } catch { /* gone */ }
-  await new Promise(r => setTimeout(r, 300));
+  await new Promise(r => setTimeout(r, 400));
   try { rmSync(root, { recursive: true, force: true }); } catch { /* ignore */ }
 }
 
@@ -66,7 +66,7 @@ test('server: Page API endpoints and their refusals', { skip: !(await canBind())
   const root = host();
   const realExit = process.exit;
   process.exit = () => {};
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 2, agentTimeout: 3, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 2, agentTimeout: 3, foreground: true, embedded: true, root });
   const url = session.url;
   const heartbeat = setInterval(() => fetch(url + 'api/heartbeat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).catch(() => {}), 300);
   t.after(async () => { await cleanup({ heartbeat, session, root }); process.exit = realExit; });
@@ -266,7 +266,7 @@ test('P-2: a notes batch with decision entries applies accept/reject in one writ
   const root = host();
   const realExit = process.exit;
   process.exit = () => {};
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
   const url = session.url;
   t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
 
@@ -307,7 +307,7 @@ test('a notes batch with an answer decision applies ops.answer once; a repeat is
   const root = host();
   const realExit = process.exit;
   process.exit = () => {};
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
   const url = session.url;
   t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
   const d = { type: 'decision', action: 'answer', cq: 'CQ-1', key: 'B', item: null };
@@ -325,7 +325,7 @@ test('server: run event and info().run carry startedAt', { skip: !(await canBind
   const root = host();
   const realExit = process.exit;
   process.exit = () => {};
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
   const url = session.url;
   const heartbeat = setInterval(() => fetch(url + 'api/heartbeat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).catch(() => {}), 300);
   t.after(async () => { await cleanup({ heartbeat, session, root }); process.exit = realExit; });
@@ -344,7 +344,7 @@ test('server: operator confirm is saved at once while an agent run holds the loc
   const root = host();
   const realExit = process.exit;
   process.exit = () => {};
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
   const url = session.url;
   const heartbeat = setInterval(() => fetch(url + 'api/heartbeat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).catch(() => {}), 300);
   t.after(async () => { await cleanup({ heartbeat, session, root }); process.exit = realExit; });
@@ -375,7 +375,7 @@ test('server: analyze batch guard refuses re-analysing an existing document with
   const root = host();
   const realExit = process.exit;
   process.exit = () => {};
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
   const url = session.url;
   t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
   const r = await j(url, '/api/batch', { kind: 'analyze' });
@@ -394,7 +394,7 @@ test('server: analyze without --force is accepted once intake is confirmed when 
   ), 'utf8');
   const realExit = process.exit;
   process.exit = () => {};
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
   const url = session.url;
   t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
 
@@ -410,7 +410,7 @@ test('server: analyze without --force is accepted once intake is confirmed when 
   proposals.markReestimate(root, SLUG, 'HIB-02', 'profile changed');
   const realExit = process.exit;
   process.exit = () => {};
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
   const url = session.url;
   t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
 
@@ -429,7 +429,7 @@ test('server: opening a session on an old document still at intake: review auto-
   process.exit = () => {};
   // The document is auto-confirmed inside the Session constructor, before the server ever accepts
   // a request — no page action, no explicit `intake-confirm`, sits between opening it and analysis.
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
   const url = session.url;
   t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
 
@@ -459,7 +459,7 @@ test('IN-3 backward compatibility: an out-of-process intakeConfirm (CLI-style) o
       '| We extend the storefront product page with a branch-level stock panel. | - Branch stock comes from the nightly ERP sync | Ask sales whether live stock is a hard requirement | kb: Stock display · Storefront | queued |'), 'utf8');
   const realExit = process.exit;
   process.exit = () => {};
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
   const url = session.url;
   t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
 
@@ -482,7 +482,7 @@ test('IN-11: finishing an analyze batch requeues the next chunk while work remai
   proposals.markReestimate(root, SLUG, 'HIB-01', 'test');
   const realExit = process.exit;
   process.exit = () => {};
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
   const url = session.url;
   t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
 
@@ -514,7 +514,7 @@ test('IN-11: an operator accept during a chunk is applied at once, before the ne
   proposals.markReestimate(root, SLUG, '*', 'test');
   const realExit = process.exit;
   process.exit = () => {};
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
   const url = session.url;
   t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
 
@@ -539,7 +539,7 @@ test('a write straight to proposals.json (a proposal-only apply, e.g. globalProp
   const root = host();
   const realExit = process.exit;
   process.exit = () => {};
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
   const url = session.url;
   t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
 
@@ -556,7 +556,7 @@ test('server: a chat-only notes batch is accepted; both empty is refused; queued
   const root = host();
   const realExit = process.exit;
   process.exit = () => {};
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
   const url = session.url;
   t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
 
@@ -586,7 +586,7 @@ test('server: heartbeat timeout opens a close grace instead of ending the sessio
   process.exit = () => {};
   // No heartbeat interval running: `lastBeat` is set back by hand instead of waiting on the
   // real 5 s tick, so the grace logic is exercised without a real wait.
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 1, agentTimeout: 5, closeGraceMs: 100000, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 1, agentTimeout: 5, closeGraceMs: 100000, foreground: true, embedded: true, root });
   const url = session.url;
   t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
 
@@ -606,7 +606,7 @@ test('server: a heartbeat during the close grace reconnects the same session', {
   const root = host();
   const realExit = process.exit;
   process.exit = () => {};
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 1, agentTimeout: 5, closeGraceMs: 100000, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 1, agentTimeout: 5, closeGraceMs: 100000, foreground: true, embedded: true, root });
   const url = session.url;
   t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
 
@@ -626,7 +626,7 @@ test('server: the session closes once the close grace elapses with no reconnect'
   const root = host();
   const realExit = process.exit;
   process.exit = () => {};
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 1, agentTimeout: 5, closeGraceMs: 300, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 1, agentTimeout: 5, closeGraceMs: 300, foreground: true, embedded: true, root });
   const url = session.url;
   t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
 
@@ -660,7 +660,7 @@ test('IN-11: a reopened item applied unchanged is not re-queued after its chunk 
     '| kb: Stock display · Storefront | estimated |', '| kb: Stock display · Storefront | reopened |'), 'utf8');
   const realExit = process.exit;
   process.exit = () => {};
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
   const url = session.url;
   t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
 
@@ -677,7 +677,7 @@ test('the partner profile survives a page reload and a new session on another do
   const root = host();
   const realExit = process.exit;
   process.exit = () => {};
-  const first = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  const first = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
   t.after(() => { process.exit = realExit; });
   let r = await j(first.url, '/api/profile');
   assert.equal(r.body.profile, null);
@@ -694,7 +694,7 @@ test('the partner profile survives a page reload and a new session on another do
   // a second tender under the same root, in a new server process, sees the same profile
   const OTHER = 'specs/rfp-0102-other-analysis.md';
   copyFileSync(path.join(root, ANALYSIS), path.join(root, OTHER));
-  const second = await startServer({ cmd: 'start', doc: OTHER, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  const second = await startServer({ cmd: 'start', doc: OTHER, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
   t.after(async () => { await cleanup({ session: second, root }); });
   r = await j(second.url, '/api/profile');
   assert.equal(r.body.profile.calibration.big, 15);

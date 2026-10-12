@@ -128,7 +128,7 @@ test('server: the own-tabs flow — session intake/fitBack fields, move, skip, r
   const h = host();
   const exit = process.exit;
   process.exit = () => {};
-  const session = await startServer({ cmd: 'start', doc: h.doc, port: 0, grace: 2, agentTimeout: 3, foreground: true, root: h.root });
+  const session = await startServer({ cmd: 'start', doc: h.doc, port: 0, grace: 2, agentTimeout: 3, foreground: true, embedded: true, root: h.root });
   const url = session.url;
   const heartbeat = setInterval(() => { j(url, '/api/heartbeat', { tab: 'test' }).catch(() => {}); }, 300);
   t.after(async () => {
