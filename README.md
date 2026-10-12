@@ -6,7 +6,7 @@ Requires Node ≥ 20.15 (`zlib.crc32`, used when writing the response workbook).
 
 Published as `@execuro-sw-ecosystem/sw-tender-discovery-tool`. The skills that
 drive this tool run `npx -y @execuro-sw-ecosystem/sw-tender-discovery-tool@latest`;
-a pinned version, e.g. `npx -y @execuro-sw-ecosystem/sw-tender-discovery-tool@0.2.0
+a pinned version, e.g. `npx -y @execuro-sw-ecosystem/sw-tender-discovery-tool@0.2.1
 start --doc <path>`, is how a consumer reproduces one exact release. Every
 command below is shown as `sw-tender-discovery-tool <subcommand>` — that is
 the bin name and the exact suffix to append after the `npx …` prefix above.

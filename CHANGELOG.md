@@ -5,6 +5,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-12
+
 ### Changed
 
 - **Answering a client question queues the answer.** Picking an option adds one `decision` entry (`action: answer`) to the Queued (n) block, counted in `Send (n)`; the card shows "✓ answer queued" with an undo, updates in place (no scroll jump, no reload) and keeps the selection across a reload. The runtime applies it with the other queued decisions on Send; an answer that fails is logged and posted to the chat.
@@ -313,6 +315,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `start` now refuses a document outside the project root with a usage error
   instead of opening a session whose state lands where nothing will look for it.
 
-[Unreleased]: https://github.com/execuro/sw-tender-discovery-tool/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/execuro/sw-tender-discovery-tool/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/execuro/sw-tender-discovery-tool/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/execuro/sw-tender-discovery-tool/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/execuro/sw-tender-discovery-tool/compare/v0.1.0...v0.1.1
