@@ -187,3 +187,29 @@ test('isReady (L-7): Ready iff every item confirmed', () => {
   assert.equal(C.isReady(allConfirmed), true);
   assert.equal(C.isReady([]), false);
 });
+
+test('nextAnalyzeItems: the default cap is 45', () => {
+  const items = Array.from({ length: 50 }, (_, i) => ({ id: `F${i + 1}`, tab: 'Functional', topic: 'R', status: { kind: 'queued' } }));
+  assert.equal(C.ANALYZE_CHUNK, 45);
+  assert.equal(C.nextAnalyzeItems(items).length, 45);
+});
+
+test('nextAnalyzeItems: a "*" mark walks the document in chunks via the star-progress set and ends empty', () => {
+  const items = Array.from({ length: 5 }, (_, i) => ({ id: `F${i + 1}`, tab: 'Functional', topic: 'R', status: { kind: 'confirmed' } }));
+  const star = [{ item: '*' }];
+  const first = C.nextAnalyzeItems(items, star, 2, { starProgress: new Set() });
+  assert.deepEqual(first, ['F1', 'F2']);
+  const second = C.nextAnalyzeItems(items, star, 2, { starProgress: new Set(first) });
+  assert.deepEqual(second, ['F3', 'F4']);
+  assert.deepEqual(C.nextAnalyzeItems(items, star, 2, { starProgress: new Set(['F1', 'F2', 'F3', 'F4', 'F5']) }), []);
+});
+
+test('nextAnalyzeItems: applied-and-unchanged reopened items are skipped unless individually marked', () => {
+  const items = [
+    { id: 'F1', tab: 'Functional', topic: 'R', status: { kind: 'reopened' } },
+    { id: 'F2', tab: 'Functional', topic: 'R', status: { kind: 'reopened' } },
+  ];
+  const skip = new Set(['F1', 'F2']);
+  assert.deepEqual(C.nextAnalyzeItems(items, [], undefined, { skip }), []);
+  assert.deepEqual(C.nextAnalyzeItems(items, [{ item: 'F2' }], undefined, { skip }), ['F2']);
+});

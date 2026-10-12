@@ -7,7 +7,7 @@ import {
   COVERAGE_VALUES, SIZES, TABS, emptyFilters, matchesFilters, itemMarkers, bulkConfirmPlan,
   waitingProposalIds, tabProposalSummary, openQuestionItemIds, parseRunReport, emptyProfileForm, profileToForm, formToProfile,
   groupByTopic, parseGlossary, markGlossary, changedIdsFromReply, lastRunChangedIds,
-  queuedRows, panelState, canSend, toggleDecision, decisionFor, decisionCount, tabDecisionCount,
+  queuedRows, panelState, canSend, toggleDecision, decisionFor, answerFor, toggleAnswer, decisionCount, tabDecisionCount,
 } from './view.mjs';
 
 // P-2: once queued decisions (accept/reject on suggestion chips) exceed this count, the queue
@@ -29,7 +29,7 @@ const FIXED_TABS = [
 // ---------------------------------------------------------------- state
 const S = {
   session: null, analysis: null, source: null, model: null, notes: [], chat: [],
-  proposals: [], profile: null, profileChecked: false,
+  proposals: [], profile: null, profilePath: null, profileLegacy: false, profileChecked: false,
   changed: new Set(),
   area: { active: null }, // one of FIXED_TABS' keys, plus 'overview'
   filters: emptyFilters(),
@@ -117,6 +117,7 @@ function noteContext(block) {
 }
 function rebindNotes() {
   for (const n of S.notes) {
+    if (n.type === 'decision' && n.action === 'answer') { const q = questionById(n.cq); n.missing = !q || Boolean(q.answered); continue; }
     if (!n.block || n.kind === 'free') continue;
     n.missing = !S.model || !(blockById(n.block) || itemById(n.block) || questionById(n.block));
   }
@@ -153,15 +154,16 @@ function queuedRow(n, row) {
 function removeQueued(n) {
   S.notes = S.notes.filter(x => x !== n);
   saveNotes(); renderQueued(); markNoted();
-  if (n.type === 'decision') refreshSuggestionChip(n.proposal);
+  if (n.type === 'decision' && n.action === 'answer') refreshQuestionCard(n.cq);
+  else if (n.type === 'decision') refreshSuggestionChip(n.proposal);
 }
 function clearQueued() {
   if (!S.notes.length) return;
   if (!confirm(`Remove all ${S.notes.length} queued item(s)? Nothing is sent to the agent.`)) return;
-  const decisionIds = S.notes.filter(n => n.type === 'decision').map(n => n.proposal);
+  const removed = S.notes.filter(n => n.type === 'decision');
   S.notes = [];
   saveNotes(); renderQueued(); markNoted();
-  for (const id of decisionIds) refreshSuggestionChip(id);
+  for (const n of removed) { if (n.action === 'answer') refreshQuestionCard(n.cq); else refreshSuggestionChip(n.proposal); }
 }
 function updateSendButton() {
   const b = $('#chat-send'), n = S.notes.length, text = $('#chat-text') && $('#chat-text').value || '';
@@ -459,8 +461,8 @@ function suggestionChipBody(p) {
       el('span', { class: 'muted pd-saved' }, `−${num(p.pdSaved)} PD`)),
     el('div', { class: 'stmt' }, p.statement),
     el('div', { class: 'chip-actions' },
-      accept,
-      el('button', { class: 'btn sm subtle', type: 'button', title: 'Reject this suggestion', onclick: () => toggleProposalDecision(p, 'reject') }, '×')),
+      el('button', { class: 'btn sm subtle', type: 'button', title: 'Reject this suggestion', onclick: () => toggleProposalDecision(p, 'reject') }, '×'),
+      accept),
   ];
 }
 function assumptionsCell(item) {
@@ -563,9 +565,19 @@ function suggestionsSummaryBar(tab, summary, queuedCount) {
     el('button', { class: 'btn sm primary', type: 'button', onclick: () => acceptAllOnTab(tab, summary) }, 'Accept all on this tab'),
     el('label', { class: 'chk', title: 'show only items with a waiting suggestion' }, toggle, 'has suggestions'));
 }
-async function answerQuestion(q, option) {
-  try { await api(`/api/question/${encodeURIComponent(q.id)}/answer`, { option }); await load(); }
-  catch (e) { toast(`Answer failed: ${e.message}`, 'bad'); }
+/** Queues (or changes, or undoes) the answer to a question: no API call, no `load()`, no
+ * `renderDoc()` — the card updates in place and the queue applies it on Send. */
+function answerQuestion(q, option) {
+  S.notes = toggleAnswer(S.notes, q, option);
+  S.queuedOpen = true;
+  saveNotes(); renderQueued();
+  refreshQuestionCard(q.id);
+  maybeAutoSendDecisions();
+}
+function refreshQuestionCard(cq) {
+  const q = questionById(cq);
+  if (!q) return;
+  document.querySelectorAll(`#doc .question.blk[data-id="${CSS.escape(cq)}"]`).forEach(card => card.replaceWith(questionCard(q)));
 }
 
 // ---------------------------------------------------------------- item row rendering
@@ -694,12 +706,17 @@ function questionCard(q) {
     q.items.length ? el('span', { class: 'q-blocks' }, ...q.items.map(id => el('a', { href: '#' + id, dataset: { goto: id } }, id))) : null));
   card.append(el('div', { class: 'q-text' }, mdInline(q.question)));
   const list = el('div', { class: 'options' });
+  const queued = q.answered ? null : answerFor(S.notes, q.id);
   for (const o of q.options || []) {
-    list.append(el('label', { class: 'option opt' + (o.checked ? ' selected' : '') },
-      el('input', { type: 'radio', name: 'q-' + q.id, value: o.key, ...(o.checked ? { checked: '' } : {}), disabled: S.closed || q.answered ? '' : null, onchange: () => answerQuestion(q, o.key) }),
+    const on = queued ? queued.key === o.key : o.checked;
+    list.append(el('label', { class: 'option opt' + (on ? ' selected' : '') },
+      el('input', { type: 'radio', name: 'q-' + q.id, value: o.key, ...(on ? { checked: '' } : {}), disabled: S.closed || q.answered ? '' : null, onchange: () => answerQuestion(q, o.key) }),
       el('span', { class: 'opt-id' }, o.key), el('span', { class: 'opt-text' }, o.text), el('span', { class: 'muted' }, ` — effect: ${o.effect}`)));
   }
   card.append(list);
+  if (queued) card.append(el('div', { class: 'chip-pending accept' },
+    el('span', { class: 'chip-pending-label' }, '✓ answer queued'),
+    el('button', { class: 'btn sm subtle chip-undo', type: 'button', title: 'Undo', onclick: () => answerQuestion(q, queued.key) }, '↺')));
   if (q.fallback) card.append(el('div', { class: 'muted' }, `Fallback: ${q.fallback}`));
   if (answered) card.append(answered);
   return card;
@@ -961,6 +978,7 @@ function renderWizard() {
   const skip = el('button', { class: 'btn subtle' }, 'Skip for now');
   skip.addEventListener('click', () => { S.wizardOpen = false; S.wizardForm = null; lsSet(LS.wizardSkipped, 1); renderDoc(); });
   box.append(el('div', { class: 'wizard-actions' }, save, skip));
+  if (S.profilePath) box.append(el('p', { class: 'muted wizard-where' }, `Saved in ${S.profilePath} — one profile per project, shared by every tender${S.profileLegacy ? ' (read from the old specs/ location until the next save)' : ''}.`));
   overlay.append(box);
   return overlay;
 }
@@ -1035,7 +1053,7 @@ async function refreshProposals() { try { const r = await api('/api/proposals');
  * session or by another tab is never missed just because this tab already skipped the wizard once.
  */
 async function loadProfile() {
-  try { const r = await api('/api/profile'); S.profile = r.profile || null; }
+  try { const r = await api('/api/profile'); S.profile = r.profile || null; S.profilePath = r.path || null; S.profileLegacy = Boolean(r.legacy); }
   catch { /* endpoint not up yet */ }
   return S.profile;
 }
@@ -1179,9 +1197,32 @@ function renderChat() {
   }
   host.scrollTop = host.scrollHeight;
 }
+/** working | queued | done | aborted | null, from the live run, the queue and the chat (never from e.queued). */
+function batchState(id) {
+  if (!id) return null;
+  if (S.run && S.run.id === id) return 'working';
+  if ((S.queue || []).includes(id)) return 'queued';
+  if (S.chat.some(x => x.batch === id && x.type === 'system' && /aborted/.test(x.text || ''))) return 'aborted';
+  if (S.chat.some(x => x.batch === id && x.type === 'reply')) return 'done';
+  return null;
+}
+function elapsedText(startedAt) {
+  const s = Math.max(0, Math.floor((Date.now() - Date.parse(startedAt)) / 1000));
+  return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+}
+function batchBadge(st) {
+  if (!st) return null;
+  if (st !== 'working') return el('span', { class: 'badge bs-' + st }, st);
+  const parts = ['working', S.run.stage, S.run.startedAt ? elapsedText(S.run.startedAt) : null].filter(Boolean);
+  return el('span', { class: 'badge bs-working' }, el('span', { class: 'pulse-dot' }), el('span', { class: 'bs-text', dataset: { started: S.run.startedAt || '', prefix: parts.slice(0, S.run.stage ? 2 : 1).join(' · ') } }, parts.join(' · ')));
+}
+function tickBatchElapsed() {
+  document.querySelectorAll('.bs-working .bs-text').forEach(n => { const d = n.dataset; n.textContent = d.started ? `${d.prefix} · ${elapsedText(d.started)}` : d.prefix; });
+}
 function batchBubble(e) {
-  const label = { intake: 'intake', analyze: 'analyse', reestimate: 're-estimate', notes: 'you' }[e.kind] || e.kind || 'batch';
-  const m = el('div', { class: 'msg user' + (e.kind === 'notes' ? '' : ' auto') }, el('div', { class: 'm-head' }, `${label} · ${e.id || ''}`, e.queued ? el('span', { class: 'badge' }, 'queued') : null));
+  const label = { intake: 'intake', analyze: 'analyse', reestimate: 're-estimate', export: 'export', notes: 'you' }[e.kind] || e.kind || 'batch';
+  const st = batchState(e.id);
+  const m = el('div', { class: 'msg user' + (e.kind === 'notes' ? '' : ' auto') + (st === 'working' ? ' working' : '') }, el('div', { class: 'm-head' }, `${label} · ${e.id || ''}`, batchBadge(st)));
   if (e.kind === 'intake') m.append(el('div', { class: 'm-body' }, 'Intake: build the working document from the confirmed mapping.'));
   else if (e.kind === 'analyze') m.append(el('div', { class: 'm-body' }, 'Analyse: assess coverage, confidence and effort for every queued item; propose assumptions and client questions.'));
   else if (e.kind === 'reestimate') m.append(el('div', { class: 'm-body' }, 'Re-estimate the items a profile change or answered question marked.'));
@@ -1261,7 +1302,7 @@ function connect() {
   es.addEventListener('doc', (ev) => applyDoc(JSON.parse(ev.data)));
   es.addEventListener('chat', (ev) => { S.chat.push(JSON.parse(ev.data)); renderChat(); if (!S.model) renderDoc(); });
   es.addEventListener('progress', () => { /* the chat event carries it too */ });
-  es.addEventListener('run', (ev) => { const r = JSON.parse(ev.data); S.queue = r.queue || []; S.run = r.active ? { id: r.active, kind: r.kind, stage: r.stage || null } : null; renderBanners(); renderHeader(); if (!S.model) renderDoc(); if (!S.run) maybeAutoSendDecisions(); });
+  es.addEventListener('run', (ev) => { const r = JSON.parse(ev.data); S.queue = r.queue || []; S.run = r.active ? { id: r.active, kind: r.kind, stage: r.stage || null, startedAt: r.startedAt || null } : null; renderBanners(); renderHeader(); renderChat(); if (!S.model) renderDoc(); if (!S.run) maybeAutoSendDecisions(); });
   es.addEventListener('agent', (ev) => { const a = JSON.parse(ev.data); S.agent.present = a.present; S.agent.everPolled = a.everPolled || S.agent.everPolled; renderBanners(); });
   es.addEventListener('queued', (ev) => { S.queuedWrites = JSON.parse(ev.data).count || 0; renderBanners(); });
   es.addEventListener('notes', (ev) => { const n = JSON.parse(ev.data); if (n.tab && n.tab !== S.tab) { S.notes = n.notes || []; rebindNotes(); renderQueued(); markNoted(); } });
@@ -1289,8 +1330,8 @@ function heartbeat() {
     .then(r => r.json()).then(j => {
       let dirty = S.serverGone; S.serverGone = false;
       if (j.agent && j.agent.present !== S.agent.present) { S.agent.present = j.agent.present; dirty = true; }
-      if ('run' in j && (j.run?.id || null) !== (S.run?.id || null)) { S.run = j.run ? { id: j.run.id, kind: j.run.kind, stage: j.run.stage || null } : null; dirty = true; if (!S.run) maybeAutoSendDecisions(); }
-      if (dirty) renderBanners();
+      if ('run' in j && (j.run?.id || null) !== (S.run?.id || null)) { S.run = j.run ? { id: j.run.id, kind: j.run.kind, stage: j.run.stage || null, startedAt: j.run.startedAt || null } : null; dirty = true; if (!S.run) maybeAutoSendDecisions(); }
+      if (dirty) { renderBanners(); renderChat(); }
     })
     .catch(() => { S.serverGone = true; renderBanners(); });
 }
@@ -1343,5 +1384,5 @@ $('#stop-btn').addEventListener('click', async () => {
   try { await api('/api/close', {}); } catch { /* already gone */ }
 });
 
-load().then(() => { connect(); heartbeat(); setInterval(heartbeat, 5000); setInterval(renderBanners, 15000); })
+load().then(() => { connect(); heartbeat(); setInterval(heartbeat, 5000); setInterval(renderBanners, 15000); setInterval(tickBatchElapsed, 1000); })
   .catch(e => { document.body.append(el('div', { class: 'overlay' }, 'Could not load the session: ' + e.message)); });

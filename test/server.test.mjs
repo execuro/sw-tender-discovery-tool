@@ -37,7 +37,7 @@ function host() {
 async function cleanup({ heartbeat, session, root }) {
   if (heartbeat) clearInterval(heartbeat);
   try { session.shutdown('test end'); } catch { /* gone */ }
-  await new Promise(r => setTimeout(r, 300));
+  await new Promise(r => setTimeout(r, 400));
   try { rmSync(root, { recursive: true, force: true }); } catch { /* ignore */ }
 }
 
@@ -66,7 +66,7 @@ test('server: Page API endpoints and their refusals', { skip: !(await canBind())
   const root = host();
   const realExit = process.exit;
   process.exit = () => {};
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 2, agentTimeout: 3, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 2, agentTimeout: 3, foreground: true, embedded: true, root });
   const url = session.url;
   const heartbeat = setInterval(() => fetch(url + 'api/heartbeat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).catch(() => {}), 300);
   t.after(async () => { await cleanup({ heartbeat, session, root }); process.exit = realExit; });
@@ -266,7 +266,7 @@ test('P-2: a notes batch with decision entries applies accept/reject in one writ
   const root = host();
   const realExit = process.exit;
   process.exit = () => {};
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
   const url = session.url;
   t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
 
@@ -303,11 +303,48 @@ test('P-2: a notes batch with decision entries applies accept/reject in one writ
   assert.ok(analyzeIds.length <= 1, `expected at most one analyze batch, got ${JSON.stringify(lock.body.queue)}`);
 });
 
+test('a notes batch with an answer decision applies ops.answer once; a repeat is reported, not silent', { skip: !(await canBind()) && 'cannot bind 127.0.0.1 in this environment' }, async (t) => {
+  const root = host();
+  const realExit = process.exit;
+  process.exit = () => {};
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
+  const url = session.url;
+  t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
+  const d = { type: 'decision', action: 'answer', cq: 'CQ-1', key: 'B', item: null };
+  let r = await j(url, '/api/batch', { kind: 'notes', notes: [d], chat: '' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.decisionsApplied, 1);
+  assert.match(readFileSync(path.join(root, ANALYSIS), 'utf8'), /Answered \d{4}-\d{2}-\d{2}: B/);
+  r = await j(url, '/api/batch', { kind: 'notes', notes: [d], chat: '' });
+  assert.equal(r.body.decisionsApplied, 0);
+  const chat = readFileSync(path.join(session.dir, 'chat.jsonl'), 'utf8');
+  assert.match(chat, /answer CQ-1 \(B\) not applied/);
+});
+
+test('server: run event and info().run carry startedAt', { skip: !(await canBind()) && 'cannot bind 127.0.0.1 in this environment' }, async (t) => {
+  const root = host();
+  const realExit = process.exit;
+  process.exit = () => {};
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
+  const url = session.url;
+  const heartbeat = setInterval(() => fetch(url + 'api/heartbeat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).catch(() => {}), 300);
+  t.after(async () => { await cleanup({ heartbeat, session, root }); process.exit = realExit; });
+  const events = [];
+  const orig = session.broadcast.bind(session);
+  session.broadcast = (name, data) => { if (name === 'run') events.push(data); return orig(name, data); };
+  await j(url, '/api/batch', { kind: 'reestimate' });
+  const r = await j(url, '/api/next?wait=2', undefined, 'GET');
+  assert.equal(r.body.event, 'batch');
+  const iso = /^\d{4}-\d\d-\d\dT/;
+  assert.match(session.info().run.startedAt, iso);
+  assert.ok(events.some(e => e.active && iso.test(e.startedAt)), JSON.stringify(events));
+});
+
 test('server: operator confirm is saved at once while an agent run holds the lock and survives the reply', { skip: !(await canBind()) && 'cannot bind 127.0.0.1 in this environment' }, async (t) => {
   const root = host();
   const realExit = process.exit;
   process.exit = () => {};
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
   const url = session.url;
   const heartbeat = setInterval(() => fetch(url + 'api/heartbeat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).catch(() => {}), 300);
   t.after(async () => { await cleanup({ heartbeat, session, root }); process.exit = realExit; });
@@ -338,7 +375,7 @@ test('server: analyze batch guard refuses re-analysing an existing document with
   const root = host();
   const realExit = process.exit;
   process.exit = () => {};
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
   const url = session.url;
   t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
   const r = await j(url, '/api/batch', { kind: 'analyze' });
@@ -357,7 +394,7 @@ test('server: analyze without --force is accepted once intake is confirmed when 
   ), 'utf8');
   const realExit = process.exit;
   process.exit = () => {};
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
   const url = session.url;
   t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
 
@@ -373,7 +410,7 @@ test('server: analyze without --force is accepted once intake is confirmed when 
   proposals.markReestimate(root, SLUG, 'HIB-02', 'profile changed');
   const realExit = process.exit;
   process.exit = () => {};
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
   const url = session.url;
   t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
 
@@ -392,7 +429,7 @@ test('server: opening a session on an old document still at intake: review auto-
   process.exit = () => {};
   // The document is auto-confirmed inside the Session constructor, before the server ever accepts
   // a request — no page action, no explicit `intake-confirm`, sits between opening it and analysis.
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
   const url = session.url;
   t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
 
@@ -422,7 +459,7 @@ test('IN-3 backward compatibility: an out-of-process intakeConfirm (CLI-style) o
       '| We extend the storefront product page with a branch-level stock panel. | - Branch stock comes from the nightly ERP sync | Ask sales whether live stock is a hard requirement | kb: Stock display · Storefront | queued |'), 'utf8');
   const realExit = process.exit;
   process.exit = () => {};
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
   const url = session.url;
   t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
 
@@ -445,7 +482,7 @@ test('IN-11: finishing an analyze batch requeues the next chunk while work remai
   proposals.markReestimate(root, SLUG, 'HIB-01', 'test');
   const realExit = process.exit;
   process.exit = () => {};
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
   const url = session.url;
   t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
 
@@ -477,7 +514,7 @@ test('IN-11: an operator accept during a chunk is applied at once, before the ne
   proposals.markReestimate(root, SLUG, '*', 'test');
   const realExit = process.exit;
   process.exit = () => {};
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
   const url = session.url;
   t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
 
@@ -502,7 +539,7 @@ test('a write straight to proposals.json (a proposal-only apply, e.g. globalProp
   const root = host();
   const realExit = process.exit;
   process.exit = () => {};
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
   const url = session.url;
   t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
 
@@ -519,7 +556,7 @@ test('server: a chat-only notes batch is accepted; both empty is refused; queued
   const root = host();
   const realExit = process.exit;
   process.exit = () => {};
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
   const url = session.url;
   t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
 
@@ -549,7 +586,7 @@ test('server: heartbeat timeout opens a close grace instead of ending the sessio
   process.exit = () => {};
   // No heartbeat interval running: `lastBeat` is set back by hand instead of waiting on the
   // real 5 s tick, so the grace logic is exercised without a real wait.
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 1, agentTimeout: 5, closeGraceMs: 100000, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 1, agentTimeout: 5, closeGraceMs: 100000, foreground: true, embedded: true, root });
   const url = session.url;
   t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
 
@@ -569,7 +606,7 @@ test('server: a heartbeat during the close grace reconnects the same session', {
   const root = host();
   const realExit = process.exit;
   process.exit = () => {};
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 1, agentTimeout: 5, closeGraceMs: 100000, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 1, agentTimeout: 5, closeGraceMs: 100000, foreground: true, embedded: true, root });
   const url = session.url;
   t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
 
@@ -589,7 +626,7 @@ test('server: the session closes once the close grace elapses with no reconnect'
   const root = host();
   const realExit = process.exit;
   process.exit = () => {};
-  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 1, agentTimeout: 5, closeGraceMs: 300, foreground: true, root });
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 1, agentTimeout: 5, closeGraceMs: 300, foreground: true, embedded: true, root });
   const url = session.url;
   t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
 
@@ -615,3 +652,53 @@ test('only the newest session banner survives; older boundaries collapse to one 
   assert.deepEqual(out.map(e => e.text ?? e.md), ['one', 'previous session', 'two', 'session resumed on http://127.0.0.1:3/']);
 });
 
+
+test('IN-11: a reopened item applied unchanged is not re-queued after its chunk finishes', { skip: !(await canBind()) && 'cannot bind 127.0.0.1 in this environment' }, async (t) => {
+  const root = host();
+  const analysisFile = path.join(root, ANALYSIS);
+  writeFileSync(analysisFile, readFileSync(analysisFile, 'utf8').replace(
+    '| kb: Stock display · Storefront | estimated |', '| kb: Stock display · Storefront | reopened |'), 'utf8');
+  const realExit = process.exit;
+  process.exit = () => {};
+  const session = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
+  const url = session.url;
+  t.after(async () => { await cleanup({ session, root }); process.exit = realExit; });
+
+  const next = await j(url, '/api/next?wait=2', undefined, 'GET');
+  assert.equal(next.body.event, 'batch');
+  assert.deepEqual(next.body.batch.items, ['HIB-02']);
+  await j(url, '/api/agent/reply', { markdown: 'done', batch: next.body.batch.id });
+  await new Promise(r => setTimeout(r, 30));
+  const lock = await j(url, '/api/lock');
+  assert.equal(lock.body.queue.length, 0, 'the unchanged reopened item is not queued again');
+});
+
+test('the partner profile survives a page reload and a new session on another document (var/ store)', { skip: !(await canBind()) && 'cannot bind 127.0.0.1 in this environment' }, async (t) => {
+  const root = host();
+  const realExit = process.exit;
+  process.exit = () => {};
+  const first = await startServer({ cmd: 'start', doc: ANALYSIS, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
+  t.after(() => { process.exit = realExit; });
+  let r = await j(first.url, '/api/profile');
+  assert.equal(r.body.profile, null);
+  assert.equal(r.body.path, 'var/sw-ai-sdk/tender/partner-profile.md', 'the page is told where the profile lives');
+  r = await j(first.url, '/api/profile', { calibration: { small: 1.5, big: 15 }, overhead: 10, buffer: { percent: 10, mode: 'folded' }, isv: [], assets: [] }, 'PUT');
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(existsSync(path.join(root, 'var', 'sw-ai-sdk', 'tender', 'partner-profile.md')), true);
+  assert.equal(existsSync(path.join(root, 'specs', 'rfp-partner-profile.md')), false, 'nothing is written under specs/');
+  // a reload is a fresh GET on the same server
+  r = await j(first.url, '/api/profile');
+  assert.equal(r.body.profile.calibration.big, 15);
+  await cleanup({ session: first, root: null });
+
+  // a second tender under the same root, in a new server process, sees the same profile
+  const OTHER = 'specs/rfp-0102-other-analysis.md';
+  copyFileSync(path.join(root, ANALYSIS), path.join(root, OTHER));
+  const second = await startServer({ cmd: 'start', doc: OTHER, port: 0, grace: 5, agentTimeout: 5, foreground: true, embedded: true, root });
+  t.after(async () => { await cleanup({ session: second, root }); });
+  r = await j(second.url, '/api/profile');
+  assert.equal(r.body.profile.calibration.big, 15);
+  assert.equal(r.body.legacy, undefined);
+  const s = await j(second.url, '/api/session');
+  assert.equal(s.body.session.doc.regime, 'profile');
+});

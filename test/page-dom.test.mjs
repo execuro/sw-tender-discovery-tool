@@ -13,6 +13,16 @@ const HTML = fs.readFileSync(path.join(HERE, '..', 'page', 'index.html'), 'utf8'
 const APP_JS = fs.readFileSync(path.join(HERE, '..', 'page', 'app.js'), 'utf8');
 const APP_CSS = fs.readFileSync(path.join(HERE, '..', 'page', 'app.css'), 'utf8');
 
+test('batch bubble badge derives from S.run.id / S.queue, not e.queued, and ticks elapsed time', () => {
+  const fn = APP_JS.slice(APP_JS.indexOf('function batchBubble'), APP_JS.indexOf('function replyBubble'));
+  assert.ok(!/e\.queued/.test(fn));
+  const st = APP_JS.slice(APP_JS.indexOf('function batchState'), APP_JS.indexOf('function elapsedText'));
+  assert.ok(/S\.run\.id === id/.test(st) && /S\.queue/.test(st));
+  assert.ok(/export: 'export'/.test(fn));
+  assert.ok(/setInterval\(tickBatchElapsed/.test(APP_JS));
+  assert.ok(/\.pulse-dot/.test(APP_CSS) && /\.msg\.user\.working/.test(APP_CSS));
+});
+
 test('index.html has no #notes-panel, #notes, #send-btn or #free-note-btn (Notes panel removed)', () => {
   for (const id of ['id="notes-panel"', 'id="notes"', 'id="send-btn"', 'id="free-note-btn"']) {
     assert.ok(!HTML.includes(id), `${id} should be gone`);
@@ -231,4 +241,12 @@ test('app.js: confirmItems returns on a 202 without an unconditional load()', ()
   assert.match(fn, /if \(r\.queued\)[^\n]*return;/);
   assert.ok(fn.indexOf('r.queued') < fn.indexOf('await load()'), 'the queued check precedes load()');
   assert.match(fn, /captureScroll\(\)[\s\S]*restoreScroll/);
+});
+
+test('app.js: answering a question queues a decision, with no API call, load() or renderDoc()', () => {
+  const start = APP_JS.indexOf('function answerQuestion');
+  const fn = APP_JS.slice(start, APP_JS.indexOf('\nfunction refreshQuestionCard', start));
+  assert.match(fn, /toggleAnswer\(S\.notes, q, option\)/);
+  assert.match(fn, /refreshQuestionCard\(q\.id\)/);
+  assert.ok(!/api\(|load\(|renderDoc\(/.test(fn), 'answerQuestion must not call api/load/renderDoc');
 });

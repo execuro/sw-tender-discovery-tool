@@ -7,6 +7,7 @@
 // analysis-doc.mjs`) instead of going through `intake`/`import` — WP-4's write scope is the export
 // side only, and `lib/intake.mjs` is mid-rewrite under a concurrent work package (contract §8).
 import { test } from 'node:test';
+import { profilePath } from '../lib/profile.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -661,7 +662,8 @@ test('D-34: each export appends one §8 Log line naming its version, file, confi
 test('a CSV/PDF own-tabs export in the profile regime names the actual regime, and marks an over-calibration item not decomposed, in the By tab totals', () => {
   const h = host();
   try {
-    fs.writeFileSync(path.join(h.root, 'specs', 'rfp-partner-profile.md'),
+    fs.mkdirSync(path.dirname(profilePath(h.root)), { recursive: true });
+    fs.writeFileSync(profilePath(h.root),
       '---\ncalibration: { small: 2, big: 5 }\noverhead: 10\nbuffer: { percent: 5, mode: folded }\nisv: []\nassets: []\n---\n');
     const doc = path.join(h.root, 'specs', 'rfp-0308-mini-analysis.md');
     fs.writeFileSync(doc, buildAnalysisDoc({

@@ -51,6 +51,7 @@ function assertAllSixTokensFilled(coverage, where) {
 // ---------------------------------------------------------------- sample sha256 unchanged
 
 test('the tracked samples are never modified by importing or intaking them', () => {
+  if (!fs.existsSync(SAMPLE_A) || !fs.existsSync(SAMPLE_B)) { console.log('  (skipped — samples not present)'); return; }
   const beforeA = sha256(SAMPLE_A);
   const beforeB = sha256(SAMPLE_B);
   const h1 = host();

@@ -8,7 +8,7 @@ import * as ops from '../lib/ops.mjs';
 import { apply } from '../lib/apply.mjs';
 import { parse } from '../lib/parse.mjs';
 import * as proposals from '../lib/proposals.mjs';
-import { readProfile } from '../lib/profile.mjs';
+import { readProfile, profilePath } from '../lib/profile.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = fs.readFileSync(path.join(here, 'fixtures', 'rfp-0101-xlsx-ids-analysis.md'), 'utf8');
@@ -120,8 +120,8 @@ test('AC-8: accepting a proposal on a confirmed item reopens it immediately and 
 test('accept lowers a numeric-PD (profile regime) Effort by pdSaved, floored at the calibration small point, and records was X in References', () => {
   const { root, doc, cleanup } = host();
   try {
-    fs.mkdirSync(path.dirname(path.join(root, 'specs', 'rfp-partner-profile.md')), { recursive: true });
-    fs.writeFileSync(path.join(root, 'specs', 'rfp-partner-profile.md'),
+    fs.mkdirSync(path.dirname(profilePath(root)), { recursive: true });
+    fs.writeFileSync(profilePath(root),
       '---\ncalibration: { small: 2, big: 20 }\noverhead: 10\nbuffer: { percent: 5, mode: folded }\nisv: []\nassets: []\n---\n');
     apply({ root, doc, report: { cause: 'x', items: [{ id: 'HIB-03', coverage: 'Extension', pd: 4, references: ['project: something'], proposals: [{ statement: 'Client accepts the default layout.', pdSaved: 1 }] }] } });
     const before = docModel(doc).items.find(i => i.id === 'HIB-03');
@@ -138,8 +138,8 @@ test('accept lowers a numeric-PD (profile regime) Effort by pdSaved, floored at 
 test('accept floors the effort drop at the calibration small point, and leaves a T-shirt effort untouched', () => {
   const { root, doc, cleanup } = host();
   try {
-    fs.mkdirSync(path.dirname(path.join(root, 'specs', 'rfp-partner-profile.md')), { recursive: true });
-    fs.writeFileSync(path.join(root, 'specs', 'rfp-partner-profile.md'),
+    fs.mkdirSync(path.dirname(profilePath(root)), { recursive: true });
+    fs.writeFileSync(profilePath(root),
       '---\ncalibration: { small: 2, big: 20 }\noverhead: 10\nbuffer: { percent: 5, mode: folded }\nisv: []\nassets: []\n---\n');
     // pd: 20 -> profile-adjusted effort 23 PD (overhead 10%, buffer 5% folded); pdSaved 22 stays
     // under that cap (AQ-2) while still dropping the effort below the calibration.small floor.
@@ -315,7 +315,7 @@ test('AC-14/AC-30: writing a partner profile validates, persists and marks every
   try {
     const bad = ops.profile({ root, doc, data: { calibration: { small: 2 }, overhead: 10, buffer: { percent: 5, mode: 'folded' }, isv: [], assets: [] } });
     assert.equal(bad.ok, false, 'missing calibration.big is refused');
-    assert.equal(fs.existsSync(path.join(root, 'specs', 'rfp-partner-profile.md')), false, 'no partial file left behind');
+    assert.equal(fs.existsSync(profilePath(root)), false, 'no partial file left behind');
 
     const good = ops.profile({ root, doc, data: { calibration: { small: 2, big: 20 }, overhead: 10, buffer: { percent: 5, mode: 'folded' }, isv: [{ name: 'Foo', vendor: 'Bar', versions: ['6.6'] }], assets: [] } });
     assert.equal(good.ok, true);

@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { profilePath } from '../lib/profile.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -238,8 +239,8 @@ test('D-5: apply refuses size in the profile regime, pd in the T-shirt regime, a
 test('D-5: apply refuses size in the profile regime', () => {
   const { root, doc, cleanup } = host();
   try {
-    fs.mkdirSync(path.dirname(path.join(root, 'specs', 'rfp-partner-profile.md')), { recursive: true });
-    fs.writeFileSync(path.join(root, 'specs', 'rfp-partner-profile.md'),
+    fs.mkdirSync(path.dirname(profilePath(root)), { recursive: true });
+    fs.writeFileSync(profilePath(root),
       '---\ncalibration: { small: 2, big: 20 }\noverhead: 10\nbuffer: { percent: 5, mode: folded }\nisv: []\nassets: []\n---\n');
     const r = apply({ root, doc, report: { cause: 'x', items: [{ id: 'HIB-03', coverage: 'Extension', size: 'S' }] } });
     assert.equal(r.ok, false);
@@ -261,8 +262,8 @@ test('D-6: OOTB coverage auto-fills the effort — — (0 PD) in T-shirt, 0 PD i
 test('D-6 (profile regime): OOTB coverage auto-fills 0 PD with no pd sent', () => {
   const { root, doc, cleanup } = host();
   try {
-    fs.mkdirSync(path.dirname(path.join(root, 'specs', 'rfp-partner-profile.md')), { recursive: true });
-    fs.writeFileSync(path.join(root, 'specs', 'rfp-partner-profile.md'),
+    fs.mkdirSync(path.dirname(profilePath(root)), { recursive: true });
+    fs.writeFileSync(profilePath(root),
       '---\ncalibration: { small: 2, big: 20 }\noverhead: 10\nbuffer: { percent: 5, mode: folded }\nisv: []\nassets: []\n---\n');
     const r = apply({ root, doc, report: { cause: 'x', items: [{ id: 'HIB-03', coverage: 'OOTB', references: ['kb: Some feature'] }] } });
     assert.equal(r.ok, true, JSON.stringify(r));
@@ -402,8 +403,8 @@ test('D-12: a CQ option needs a non-empty effect', () => {
 test('AC-14: a profile change reopens a confirmed item whose Effort it changes; re-applying the same report a second time leaves it reopened, not silently re-confirmed', () => {
   const { root, doc, cleanup } = host();
   try {
-    fs.mkdirSync(path.dirname(path.join(root, 'specs', 'rfp-partner-profile.md')), { recursive: true });
-    fs.writeFileSync(path.join(root, 'specs', 'rfp-partner-profile.md'),
+    fs.mkdirSync(path.dirname(profilePath(root)), { recursive: true });
+    fs.writeFileSync(profilePath(root),
       '---\ncalibration: { small: 2, big: 20 }\noverhead: 10\nbuffer: { percent: 5, mode: folded }\nisv: []\nassets: []\n---\n');
     apply({ root, doc, report: { cause: 'profile changed', items: [{ id: 'HIB-01', pd: 2 }] } });
     const changed = docModel(doc).items.find(i => i.id === 'HIB-01');
@@ -419,8 +420,8 @@ test('#9/AC-14: a regime switch that leaves the PD figure unchanged (0 -> 0) doe
   const { root, doc, cleanup } = host();
   try {
     // HIB-01 is `confirmed`, OOTB, `— (0 PD)` (T-shirt: size '—', pd 0).
-    fs.mkdirSync(path.dirname(path.join(root, 'specs', 'rfp-partner-profile.md')), { recursive: true });
-    fs.writeFileSync(path.join(root, 'specs', 'rfp-partner-profile.md'),
+    fs.mkdirSync(path.dirname(profilePath(root)), { recursive: true });
+    fs.writeFileSync(profilePath(root),
       '---\ncalibration: { small: 2, big: 20 }\noverhead: 10\nbuffer: { percent: 5, mode: folded }\nisv: []\nassets: []\n---\n');
     // No `pd` sent: OOTB auto-fills 0 PD in the profile regime too (D-6) — same PD, no size label.
     apply({ root, doc, report: { cause: 'profile changed', items: [{ id: 'HIB-01', coverage: 'OOTB' }] } });
@@ -629,5 +630,51 @@ test('apply dedupes a reference the item already carries instead of piling up a 
     const afterSecond = docModel(doc).items.find(i => i.id === 'HIB-03');
     assert.equal(afterSecond.references.filter(r => r === 'kb: Some feature').length, 1, 'no duplicate reference from a report that repeats one already present');
     assert.ok(afterSecond.references.includes('project: a new one'), 'a genuinely new reference in the same report still lands');
+  } finally { cleanup(); }
+});
+
+const CQ_REPORT = () => ({ cause: 'x', items: [{ id: 'CMP-01', coverage: 'OOTB', confidence: 'low', size: 'S', blockedBy: 'new:0', references: ['project: purge job'] }], questions: [
+  { items: ['CMP-01'], question: 'Is a 7-year retention mandatory?', options: [{ key: 'A', text: 'yes', effect: 'custom archive' }, { key: 'B', text: 'no', effect: 'stock log suffices' }], fallback: 'B' },
+] });
+
+test('CQ idempotence: applying the same report twice adds no question', () => {
+  const { root, doc, cleanup } = host();
+  try {
+    assert.equal(apply({ root, doc, report: CQ_REPORT() }).ok, true);
+    const before = docModel(doc).questions.length;
+    const r = apply({ root, doc, report: CQ_REPORT() });
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.questions, []);
+    assert.equal(docModel(doc).questions.length, before);
+    assert.equal(docModel(doc).items.find(i => i.id === 'CMP-01').status.cq, 'CQ-2');
+  } finally { cleanup(); }
+});
+
+test('CQ idempotence: same text with different case/whitespace and an overlapping item merges; new items are unioned', () => {
+  const { root, doc, cleanup } = host();
+  try {
+    apply({ root, doc, report: CQ_REPORT() });
+    const rep = CQ_REPORT();
+    rep.questions[0].items = ['CMP-01', 'HIB-03'];
+    rep.questions[0].question = '  is a 7-YEAR   retention mandatory? ';
+    rep.items.push({ id: 'HIB-03', coverage: 'OOTB', confidence: 'low', size: 'S', blockedBy: 'new:0', references: ['project: x'] });
+    const r = apply({ root, doc, report: rep });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.deepEqual(r.questions, []);
+    const cq = docModel(doc).questions.find(q => q.id === 'CQ-2');
+    assert.deepEqual(cq.items, ['CMP-01', 'HIB-03']);
+    assert.equal(docModel(doc).items.find(i => i.id === 'HIB-03').status.cq, 'CQ-2');
+  } finally { cleanup(); }
+});
+
+test('CQ idempotence: re-apply after a failed check adds no question, and blockedBy CQ-n appends the item', () => {
+  const { root, doc, cleanup } = host();
+  try {
+    apply({ root, doc, report: CQ_REPORT() });
+    const r = apply({ root, doc, report: { cause: 'x', items: [{ id: 'HIB-03', coverage: 'OOTB', confidence: 'low', size: 'S', blockedBy: 'CQ-2', references: ['project: x'] }] } });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.deepEqual(docModel(doc).questions.find(q => q.id === 'CQ-2').items, ['CMP-01', 'HIB-03']);
+    assert.equal(apply({ root, doc, report: CQ_REPORT() }).ok, true);
+    assert.equal(docModel(doc).questions.filter(q => q.question === 'Is a 7-year retention mandatory?').length, 1);
   } finally { cleanup(); }
 });

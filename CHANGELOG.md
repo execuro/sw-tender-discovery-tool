@@ -5,6 +5,33 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Changed
+
+- **Answering a client question queues the answer.** Picking an option adds one `decision` entry (`action: answer`) to the Queued (n) block, counted in `Send (n)`; the card shows "✓ answer queued" with an undo, updates in place (no scroll jump, no reload) and keeps the selection across a reload. The runtime applies it with the other queued decisions on Send; an answer that fails is logged and posted to the chat.
+
+- **The partner profile lives in `var/`.** `var/sw-ai-sdk/tender/partner-profile.md` under the project root — one profile per checkout, shared by every tender, gitignored through Shopware's `/var/*` — instead of `specs/rfp-partner-profile.md`, which a tracked copy could clobber. An old `specs/` file is still read (`GET /api/profile` says `legacy: true`) until the next save writes the new location; `GET /api/profile` returns `path`, and the wizard shows it.
+
+- **Analyze chunks hold up to 45 items** (was about 15).
+
+### Fixed
+
+- **No re-queue loop.** A `*` re-estimate mark now walks the document
+  (items already written since the mark are skipped) and clears; a `reopened`
+  item applied unchanged is not queued again until the operator changes it or
+  a per-item mark names it.
+- **No duplicate client questions.** `apply` reuses an existing CQ with the
+  same normalised text and an overlapping item set, unions item ids into it,
+  appends an item reported `blockedBy` an existing CQ, and never re-blocks an
+  item on an answered one.
+
+### Added
+
+- **The running batch is marked in the chat.** Each batch bubble shows its live
+  state from the run and the queue: `working` (pulsing dot, stage, elapsed
+  time), `queued`, `done` or `aborted`; the working bubble is highlighted. The
+  `run` event and `info().run` carry `startedAt`. The `export` batch now has
+  its label.
+
 ## [0.2.0] - 2026-09-25
 
 ### Fixed

@@ -12,7 +12,7 @@ import {
   bulkConfirmPlan, waitingProposalIds, tabProposalSummary, openQuestionItemIds, parseRunReport, REPORT_FIELDS,
   emptyProfileForm, profileToForm, formToProfile, splitHeading, topicsOf, groupByTopic,
   parseGlossary, markGlossary, isNegativeToken, changedIdsFromReply, lastRunChangedIds,
-  queuedRows, panelState, canSend, toggleDecision, decisionFor, decisionCount, tabDecisionCount,
+  queuedRows, panelState, canSend, toggleDecision, toggleAnswer, answerFor, decisionFor, decisionCount, tabDecisionCount,
 } from '../page/view.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -429,4 +429,22 @@ test('queuedRows: a decision entry reads "Accept P-3 · GEN-04 · −2 PD"', () 
 test('COVERAGE_VALUES / SIZES match the parser\'s own sets', () => {
   assert.deepEqual(COVERAGE_VALUES, ['OOTB', 'Configuration', 'Extension', 'ISV', 'Custom', '—']);
   assert.deepEqual(SIZES, ['XS', 'S', 'M', 'L', 'XL', 'XXL']);
+});
+
+test('toggleAnswer: adds, replaces and removes one answer entry per question; counts and queue row', () => {
+  const q = { id: 'CQ-1', question: 'Which?', items: ['GEN-04'] };
+  let notes = toggleAnswer([], q, 'A');
+  assert.equal(notes.length, 1);
+  assert.deepEqual([notes[0].type, notes[0].action, notes[0].cq, notes[0].key, notes[0].item], ['decision', 'answer', 'CQ-1', 'A', 'GEN-04']);
+  notes = toggleAnswer(notes, q, 'B');
+  assert.equal(notes.length, 1);
+  assert.equal(answerFor(notes, 'CQ-1').key, 'B');
+  assert.equal(decisionCount(notes), 1);
+  const rows = queuedRows(notes, { items: [{ id: 'GEN-04' }], questions: [{ id: 'CQ-1' }] });
+  assert.equal(rows[0].text, 'Answer CQ-1 · option B');
+  assert.equal(rows[0].missing, false);
+  assert.equal(queuedRows(notes, { items: [], questions: [{ id: 'CQ-1', answered: { key: 'A' } }] })[0].missing, true);
+  assert.equal(queuedRows(notes, { items: [], questions: [] })[0].missing, true);
+  notes = toggleAnswer(notes, q, 'B');
+  assert.equal(notes.length, 0);
 });
